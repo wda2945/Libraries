@@ -15,6 +15,8 @@ ps_network& the_network()
 	return network;
 }
 
+ps_network::ps_network(){}
+
 void network_transport_status_callback(ps_transport_class *pst, ps_transport_status_enum status)
 {
     the_network().report_network_event(pst, status);
@@ -36,16 +38,16 @@ void ps_network::iterate_transports(void (*callback)(ps_transport_class *, ps_tr
     }
 }
 
-ps_transport_class *ps_network::get_transport_by_name(char *_name)
+ps_transport_class *ps_network::get_transport_by_name(const char *_name)
 {
     for (const auto& pst : transports)
     {
-        if (strcmp(pst->name, _name) == 0) return pst;
+        if (pst->name.compare(_name) == 0) return pst;
     }
     return nullptr;
 }
 
-ps_transport_status_enum ps_network::get_transport_status(char *_name)
+ps_transport_status_enum ps_network::get_transport_status(const char *_name)
 {
     ps_transport_class *pst = get_transport_by_name(_name);
     if (pst != nullptr)
@@ -71,4 +73,3 @@ void ps_network::report_network_event(ps_transport_class *pst, ps_transport_stat
     }
 }
 
-ps_network network;

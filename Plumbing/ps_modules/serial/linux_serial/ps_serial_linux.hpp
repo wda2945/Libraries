@@ -20,12 +20,12 @@ public:
     ps_serial_linux(const char *_name, const char *devicePath, unsigned int baudrate);
     
     //send bytes
-    ps_result_enum write_bytes(uint8_t *data, size_t length);
+    ps_result_enum write_bytes(void *data, int length);
     
     //receive bytes
     bool data_available();
     
-    ssize_t read_bytes(uint8_t *data, size_t length);
+    int read_bytes(void *data, size_t length);
     
 };
 

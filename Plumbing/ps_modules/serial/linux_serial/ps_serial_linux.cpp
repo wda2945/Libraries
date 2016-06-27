@@ -38,9 +38,9 @@ ps_serial_linux::ps_serial_linux(const char *_name, const char *devicePath, unsi
 }
 
 //receive bytes
-ssize_t ps_serial_linux::read_bytes(unsigned char *data, size_t length)
+int ps_serial_linux::read_bytes(void *data, int length)
 {
-    ssize_t readchars;
+    int readchars;
     
     do {
         readchars = read(FD, &data, length);
@@ -50,10 +50,10 @@ ssize_t ps_serial_linux::read_bytes(unsigned char *data, size_t length)
 }
 
 //send bytes
-ps_result_enum ps_serial_linux::write_bytes(unsigned char *data, size_t _length)
+ps_result_enum ps_serial_linux::write_bytes(void *data, int _length)
 {
-    ssize_t written;
-    ssize_t length = _length;
+    int written;
+    int length = _length;
     unsigned char *next = data;
     
     do {

@@ -9,44 +9,56 @@
 #ifndef ps_packet_class_hpp
 #define ps_packet_class_hpp
 
-#include "ps_types.h"
 #include "common/ps_root_class.hpp"
+
+typedef enum {
+	PS_PACKET_OFFLINE,
+	PS_PACKET_ONLINE,
+	PS_PACKET_ERROR,
+	PS_PACKET_REMOVED
+} ps_packet_status;
+
+class ps_packet_class;
+
+typedef void (packet_data_callback_t)(void *, ps_packet_class *, void *, int);
+typedef void (packet_status_callback_t)(void *, ps_packet_class *, ps_packet_status);
 
 class ps_packet_class : public ps_root_class {
     
-protected:
-    
-    //callback for new data packet
-    void (*dataCallback)(void *, ps_packet_class *, void *, size_t);
-    void *dataArg;
-    
-    //callback for transmission errors
-    void (*errorCallback)(void *, ps_packet_class *, ps_result_enum);
-    void *errorArg;
-    
 public:
+    ps_packet_class(char *name, int max_packet);
+    ps_packet_class(std::string name, int max_packet);
+    virtual ~ps_packet_class();
     
     uint16_t            max_packet_size;            ///< max size of rxmsg buffer
     uint32_t            packet_rx_success_count;    ///< Received packets
     uint32_t            packet_rx_drop_count;       ///< Number of packet drops
 
     //send packet
-    virtual ps_result_enum send_packet(uint8_t *packet, size_t length) = 0;
+    virtual ps_result_enum send_packet(void *packet, int length) = 0;
     
     //set callback to receive packets
-    ps_result_enum set_data_callback(void *arg,
-                                  void (*_dataCallback)(void *arg, ps_packet_class *, void *, size_t));
+    ps_result_enum set_data_callback(void *arg, packet_data_callback_t *dcb);
 
     //set callback to receive errors
-    ps_result_enum set_error_callback(void *arg,
-                                   void (*_errorCallback)(void *arg, ps_packet_class *, ps_result_enum));
+    ps_result_enum set_status_callback(void *arg, packet_status_callback_t *ecb);
     
     //callback for new data packet
-    void action_data_callback(void *pkt, size_t len);
+    void action_data_callback(void *pkt, int len);
     
     //callback for transmission errors
-    void action_error_callback(ps_result_enum res);
-    
+    void action_status_callback(ps_packet_status res);
+
+protected:
+
+    //callback for new data packet
+	packet_data_callback_t *dataCallback;
+    void *dataArg;
+
+    //callback for transmission errors
+    packet_status_callback_t *statusCallback;
+    void *statusArg;
+
 };
 
 #endif /* ps_packet_class_hpp */

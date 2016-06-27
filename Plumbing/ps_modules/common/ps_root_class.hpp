@@ -9,29 +9,33 @@
 #ifndef ps_root_class_hpp
 #define ps_root_class_hpp
 
-#include "ps_types.h"
+#include "ps_common.h"
+#include "ps.h"
 #include <string>
+
+//using namespace std;
 
 //root class used by all platform nodes
 
 class ps_root_class {
 
 public:
-    int tag = 0;
-    char *name = nullptr;
-    
-    void set_node_tag();
-    void set_node_name(const char *_name);
-    
-    virtual ps_result_enum set_string_parameter(const char *name, const char *value){return PS_NAME_NOT_FOUND;}
-    virtual ps_result_enum get_string_parameter(const char *name, char *buffer, size_t length){return PS_NAME_NOT_FOUND;}
-    virtual ps_result_enum set_real_parameter(const char *name, const double value){return PS_NAME_NOT_FOUND;}
-    virtual ps_result_enum get_real_parameter(const char *name, double *value){return PS_NAME_NOT_FOUND;}
-    virtual ps_result_enum set_integer_parameter(const char *name, const int32_t value){return PS_NAME_NOT_FOUND;}
-    virtual ps_result_enum get_integer_parameter(const char *name, int32_t *value){return PS_NAME_NOT_FOUND;}
-    virtual ps_result_enum set_boolean_parameter(const char *name, const bool value){return PS_NAME_NOT_FOUND;}
-    virtual ps_result_enum get_boolean_parameter(const char *name, bool *value){return PS_NAME_NOT_FOUND;}
+	ps_root_class(){}
+	ps_root_class(char *_name){name = _name;}
+	ps_root_class(std::string _name){name = _name;}
 
+	ps_packet_source_t tag = 0;
+    std::string name = "";
+    
+    void set_node_tag(){tag = ++last_tag;}
+    void set_node_name(const char * _name){name = _name;}
+    void set_node_name(std::string _name){name = _name;}
+
+    //used to receive published messages in subclasses
+    virtual void message_handler(void *msg, int length){}
+
+protected:
+    static ps_packet_source_t last_tag;
 };
 
 #endif /* ps_root_class_hpp */

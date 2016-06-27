@@ -9,6 +9,24 @@
 #ifndef ps_socket_server_hpp
 #define ps_socket_server_hpp
 
-#include <stdio.h>
+#include "pthread.h"
+
+extern bool ping_response_received;
+
+class ps_socket_server {
+	int listen_port_number;
+	int listen_socket;
+
+	pthread_t listenThread;
+	pthread_t pingThread;
+
+public:
+
+	ps_socket_server(int _listen_port_number, const char *ping_target);
+	~ps_socket_server();
+
+	void ServerListenThreadMethod();
+
+};
 
 #endif /* ps_socket_server_hpp */

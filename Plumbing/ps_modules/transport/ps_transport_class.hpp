@@ -16,7 +16,8 @@ typedef enum {
     PS_TRANSPORT_UNKNOWN,
     PS_TRANSPORT_ONLINE,
     PS_TRANSPORT_OFFLINE,
-    PS_TRANSPORT_ADDED
+    PS_TRANSPORT_ADDED,
+	PS_TRANSPORT_REMOVED
 } ps_transport_status_enum;
 
 const int PS_TRANSPORT_RETRIES          = 10;
@@ -44,12 +45,7 @@ typedef struct {
     uint8_t sequenceNumber;
     uint8_t lastReceivedSequenceNumber;
     uint8_t status;
-    uint8_t message[PS_DEFAULT_MAX_PACKET];
-} ps_transport_packet_t;
-
-const int PS_TRANSPORT_HEADER_OFFSET = (sizeof(uint16_t));
-const int PS_TRANSPORT_HEADER_SIZE      = 3 * sizeof(uint8_t);
-const int PS_TRANSPORT_MESSAGE_OFFSET = (PS_TRANSPORT_HEADER_OFFSET + PS_TRANSPORT_HEADER_SIZE);
+} ps_transport_packet_header_t;
 
 typedef struct {
     uint8_t sequenceNumber;
@@ -57,37 +53,67 @@ typedef struct {
     uint8_t status;
 } ps_transport_status_t;
 
+class ps_transport_class;
+
+typedef void (transport_data_callback_t)(ps_transport_class*, void *, int);
+typedef void (transport_status_callback_t)(ps_transport_class*, ps_transport_status_enum);
+
 class ps_transport_class : public ps_root_class {
 
-protected:
-    
-    void (*data_callback)(ps_transport_class*, void *, size_t);
-    
-    void (*status_callback)(ps_transport_class*, ps_transport_status_enum);
-    
 public:
+    ps_transport_class(ps_packet_class *driver);
+    virtual ~ps_transport_class();
+
+    int max_packet_size;
+    ps_packet_class *packet_driver;
     
     ps_transport_status_enum transport_status;
     
-    void change_status(ps_transport_status_enum newStatus);
-    bool is_online();
+    virtual void change_status(ps_transport_status_enum newStatus);
+    virtual bool is_online();
     
-    ps_packet_class *packet_driver;
-
     //send packet
-    virtual void send_packet(void *packet, size_t length) = 0;
+    virtual void send_packet(void *packet, int len) = 0;
+    virtual void send_packet2(void *packet1, int len1, void *packet2, int len2) = 0;	//convenience version
     
     //set callback to receive packets
-    ps_result_enum set_data_callback(void (*_callback)(ps_transport_class*, void *, size_t));
+    ps_result_enum set_data_callback(transport_data_callback_t *dc);
     
     //set callback to receive packets
-    ps_result_enum set_status_callback(void (*_callback)(ps_transport_class*, ps_transport_status_enum));
+    ps_result_enum set_status_callback(transport_status_callback_t *sc);
     
     //callback for new data packet
-    void action_data_callback(void *pkt, size_t len);
+    virtual void action_data_callback(void *pkt, int len);
     
     //callback for transmission errors
-    void action_status_callback(ps_transport_status_enum stat);
+    virtual void action_status_callback(ps_transport_status_enum stat);
+
+protected:
+
+    transport_data_callback_t *data_callback;
+    transport_status_callback_t *status_callback;
+
+    virtual void process_received_message(void *pkt, int len);
+
+    virtual void process_packet_status_callback(ps_packet_status stat);
+
+    virtual void packet_data_callback_method(ps_packet_class *pd, void *_pkt, int len) = 0;
+
+    virtual void packet_status_callback_method(ps_packet_class *pd, ps_packet_status stat) = 0;
+
+    //protocol data
+    uint8_t lastReceived;
+    uint8_t remoteLastReceived;
+    uint8_t lastSent;
+    uint8_t remoteLastStatus;
+
+    uint8_t statusTx;
+    ps_transport_rx_status_enum statusRx;
+
+    //callback function for new data packet
+    friend void packet_data_callback(void *arg, ps_packet_class *pd, void *_pkt, int len);
+    //callback function for transmission errors
+    friend void packet_status_callback(void *arg, ps_packet_class *pd, ps_packet_status stat);
 };
 
 #endif /* ps_transport_hpp */

@@ -6,27 +6,28 @@
 //  Copyright © 2016 Martin Lane-Smith. All rights reserved.
 //
 
+#include "ps_common.h"
 #include "ps_queue_linux.hpp"
 #include <string.h>
 #include <sys/time.h>
 
-	ps_queue_linux::ps_queue_linux(size_t entrysize, size_t preload){
+ps_queue_linux::ps_queue_linux(int entrysize, int preload){
 
     nextPointerOffset = entrysize;
     queueEntrySize = nextPointerOffset + sizeof(uint8_t *);
-    
+
     int i;
     for (i=0; i<preload; i++)
     {
-        uint8_t *entry = new_queue_entry();
+        void *entry = new_queue_entry();
         if (entry == nullptr) return;
         add_to_freelist(entry);
     }
 }
 
-void ps_queue_linux::append_queue_entry(uint8_t *e)		//appends an allocated message q entry
+void ps_queue_linux::append_queue_entry(void *e)		//appends an allocated message q entry
 {
-    uint8_t **next = (uint8_t **)(e + nextPointerOffset);
+	void **next = (void **)((uint8_t*) e + nextPointerOffset);
     
     *next = nullptr;
     
@@ -42,7 +43,7 @@ void ps_queue_linux::append_queue_entry(uint8_t *e)		//appends an allocated mess
     }
     else
     {
-        uint8_t **tailnext = (uint8_t **)(qTail + nextPointerOffset);
+    	void **tailnext = (void **)((uint8_t*)qTail + nextPointerOffset);
         *tailnext = e;
         qTail = e;
     }
@@ -55,40 +56,42 @@ void ps_queue_linux::append_queue_entry(uint8_t *e)		//appends an allocated mess
 }
 
 //appends to queue
-void ps_queue_linux::copy_2message_parts_to_q(uint8_t *msg1, size_t len1, uint8_t *msg2, size_t len2)
+void ps_queue_linux::copy_3message_parts_to_q(void *msg1, int len1, void *msg2, int len2, void *msg3, int len3)
 {
-    uint8_t *e = get_free_entry();
-    
-    if (e != nullptr)
-    {
-        size_t length1 = (len1 > nextPointerOffset ? nextPointerOffset : len1);
-        memcpy(e, msg1, length1);
-        
-        size_t length2 = 0;
-        
-        if (msg2 != nullptr)
-        {
-            length2 = (len2 > nextPointerOffset-length1 ? nextPointerOffset-length1 : len2);
-            if (length2 > 0)
-            {
-                memcpy((e + length1), msg2, length2);
-            }
-        }
-        uint16_t *size = (uint16_t*)(e + sizeOffset);
-        *size = (uint16_t) (length1+length2);
-        
-        append_queue_entry( e);
-    }
+	if (len1 + len2 + len3 < nextPointerOffset)
+	{
+		void *e = get_free_entry();
+
+		if (e != nullptr)
+		{
+			ps_q_size_t *size = (ps_q_size_t*)((uint8_t*) e + sizeOffset);
+			*size = (ps_q_size_t) (len1 + len2 + len3);
+
+			if (len1) memcpy(e, msg1, len1);
+			if (len2) memcpy(((uint8_t*) e + len1), msg2, len2);
+			if (len3) memcpy(((uint8_t*) e + len1 + len2), msg3, len3);
+
+			append_queue_entry( e);
+		}
+	}
+	else
+	{
+		PS_ERROR("queue: message too long");
+	}
 }
-void ps_queue_linux::copy_message_to_q(uint8_t *msg, size_t len)
+void ps_queue_linux::copy_2message_parts_to_q(void *msg1, int len1, void *msg2, int len2)
 {
-    copy_2message_parts_to_q(msg, len, nullptr, 0);
+	copy_3message_parts_to_q(msg1, len1, msg2, len2, nullptr, 0);
+}
+void ps_queue_linux::copy_message_to_q(void *msg, int len)
+{
+    copy_3message_parts_to_q(msg, len, nullptr, 0, nullptr, 0);
 }
 
 //waits if empty, returns pointer (call done_with_message!)
-uint8_t *ps_queue_linux::get_next_message(int msecs, size_t *length)
+void *ps_queue_linux::get_next_message(int msecs, int *length)
 {
-    uint8_t *e;
+	void *e;
     
     struct timespec abstime;
     struct timeval timenow;
@@ -116,7 +119,7 @@ uint8_t *ps_queue_linux::get_next_message(int msecs, size_t *length)
     
     if (e)
     {
-        uint8_t **next = (uint8_t **)(e + nextPointerOffset);
+    	void **next = (void **)((uint8_t*) e + nextPointerOffset);
 
         qHead = *next;
         *next = nullptr;
@@ -130,7 +133,7 @@ uint8_t *ps_queue_linux::get_next_message(int msecs, size_t *length)
         
         if (length != nullptr)
         {
-            uint16_t *size = (uint16_t*)(e + sizeOffset);
+            uint16_t *size = (uint16_t*)((uint8_t*) e + sizeOffset);
             *length = *size;
         }
     }
@@ -144,18 +147,18 @@ bool ps_queue_linux::empty()
 {
     return ((queueCount == 0));
 }
-size_t ps_queue_linux::count()
+int ps_queue_linux::count()
 {
     return queueCount;
 }
-void ps_queue_linux::done_with_message(uint8_t *msg)
+void ps_queue_linux::done_with_message(void *msg)
 {
     add_to_freelist(msg);
 }
 
-uint8_t *ps_queue_linux::get_free_entry()				//new broker q entry <- freelist
+void *ps_queue_linux::get_free_entry()				//new broker q entry <- freelist
 {
-    uint8_t *entry;
+	void *entry;
     
     //critical section
     pthread_mutex_lock(&freeMtx);
@@ -167,7 +170,7 @@ uint8_t *ps_queue_linux::get_free_entry()				//new broker q entry <- freelist
     else
     {
         entry = freelist;
-        uint8_t **next = (uint8_t **)(entry + nextPointerOffset);
+        void **next = (void **)((uint8_t*) entry + nextPointerOffset);
         freelist = *next;
     }
     
@@ -177,17 +180,17 @@ uint8_t *ps_queue_linux::get_free_entry()				//new broker q entry <- freelist
     return entry;
 }
 
-uint8_t *ps_queue_linux::new_queue_entry()
+void *ps_queue_linux::new_queue_entry()
 {
     return (uint8_t *) calloc(1, queueEntrySize);
 }
 
-void ps_queue_linux::add_to_freelist(uint8_t *e)
+void ps_queue_linux::add_to_freelist(void *e)
 {
     //critical section
     pthread_mutex_lock(&freeMtx);
 
-    uint8_t **next = (uint8_t **)(e + nextPointerOffset);
+    void **next = (void **)((uint8_t*)e + nextPointerOffset);
     *next = freelist;
     freelist = e;
     

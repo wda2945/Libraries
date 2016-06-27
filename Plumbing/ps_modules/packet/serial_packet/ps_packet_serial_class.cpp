@@ -8,7 +8,32 @@
 
 #include "ps_packet_serial_class.hpp"
 
-#define DEBUGPRINT(...)
+void serial_error_callback(void *arg, ps_serial_class *psc, ps_serial_status_enum stat);
+
+ps_packet_serial_class::ps_packet_serial_class(ps_serial_class *_driver)
+: ps_packet_class(_driver->name, 0)
+{
+	serial_driver = _driver;
+	serial_driver->set_error_callback(serial_error_callback, this);
+
+    rxmsg = malloc(max_packet_size);
+
+    if (rxmsg == NULL)
+    {
+        PS_ERROR("packet: no memory");
+    }
+}
+ps_packet_serial_class::~ps_packet_serial_class()
+{
+	delete serial_driver;
+	free(rxmsg);
+}
+
+void serial_error_callback(void *arg, ps_serial_class *psc, ps_serial_status_enum stat)
+{
+	ps_packet_serial_class *psl = (ps_packet_serial_class*) arg;
+	psl->process_serial_error_callback(stat);
+}
 
 //message checksum
 #define start_checksum() checksum = 0
@@ -46,7 +71,7 @@ parse_result_enum ps_packet_serial_class::parse_next_character(uint8_t c) {
             break;
         case PARSE_STATE_GOT_LENGTH2:
             update_checksum( c);
-            rxmsg[packet_idx++] = c;
+            ((uint8_t*)rxmsg)[packet_idx++] = c;
             update_checksum( c);
             if (packet_idx >= packetLength) {
                 parse_state = PARSE_STATE_GOT_PAYLOAD;
@@ -59,7 +84,7 @@ parse_result_enum ps_packet_serial_class::parse_next_character(uint8_t c) {
             break;
         case PARSE_STATE_GOT_CRC1:
             if (checksum != ((checksumH << 8) | c)) {
-                DEBUGPRINT("Parse: Parse error. Expected checksum %u, got %u.\n", (checksum & 0xff), c);
+                PS_DEBUG("Parse: Parse error. Expected checksum %u, got %u.\n", (checksum & 0xff), c);
                 parse_result = PARSE_CHECKSUM_ERROR;
                 parse_error++;
                 parse_state = PARSE_STATE_IDLE;
@@ -91,10 +116,30 @@ void ps_packet_serial_class::reset_parse_status() {
     packetLength            = 0;
 }
 
-uint16_t ps_packet_serial_class::calculate_checksum(uint8_t *packet, size_t length)
+void ps_packet_serial_class::process_serial_error_callback(ps_serial_status_enum stat)
+{
+	switch(stat)
+	{
+	case PS_SERIAL_OFFLINE:
+		action_status_callback(PS_PACKET_OFFLINE);
+		delete this;
+		break;
+	case PS_SERIAL_WRITE_ERROR:
+	case PS_SERIAL_READ_ERROR:
+		action_status_callback(PS_PACKET_ERROR);
+		break;
+	case PS_SERIAL_ONLINE:
+		action_status_callback(PS_PACKET_ONLINE);
+		break;
+		break;
+	}
+}
+
+uint16_t ps_packet_serial_class::calculate_checksum(uint8_t *_packet, int length)
 {
     int i;
     int checksum = 0;
+    uint8_t *packet = (uint8_t*)_packet;
     
     for (i=0; i<length; i++)
     {
@@ -102,3 +147,4 @@ uint16_t ps_packet_serial_class::calculate_checksum(uint8_t *packet, size_t leng
     }
     return (checksum & 0xffff);
 }
+

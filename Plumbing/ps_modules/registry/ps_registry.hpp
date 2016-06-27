@@ -9,26 +9,28 @@
 #ifndef ps_registry_hpp
 #define ps_registry_hpp
 
-#include "ps_types.h"
+#include <set>
+#include <map>
+#include <string>
 #include "common/ps_root_class.hpp"
+#include "ps_registry_types.hpp"
 
 class ps_registry : public ps_root_class {
   
-
 public:
-  
-    //make a hash value from the provided string
-    int get_hash_value(char *name);
-    
-    //asssign a serial number (from 0) in the selected named domain
-    uint16_t assign_serial_number(char *domain);
-    
-    //regisdter or update a value
-    ps_result_enum register_string(char *name, char *value);
-    
-    //looknup a value by name
-    ps_result_enum lookup_string(char *name, char *buffer, size_t length);
-    
+	ps_result_enum new_registry_entry(std::string name, ps_registry_value_class *new_value);
+	ps_result_enum set_registry_entry(std::string name, ps_registry_value_class *set_value);
+	ps_result_enum get_registry_entry(std::string name, ps_registry_value_class *get_value);
+	ps_result_enum set_observer(std::string name, ps_registry_observer_callback_t *callback, void *arg);
+
+protected:
+	ps_registry();
+
+	std::map<std::string, ps_registry_entry_class*> registry;
+
+	friend ps_registry& the_registry();
 };
+
+ps_registry& the_registry();
 
 #endif /* ps_registry_hpp */

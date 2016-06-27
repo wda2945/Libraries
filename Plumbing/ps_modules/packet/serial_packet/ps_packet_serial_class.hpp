@@ -9,9 +9,19 @@
 #ifndef ps_packet_serial_class_hpp
 #define ps_packet_serial_class_hpp
 
-#include "ps_types.h"
 #include "packet/ps_packet_class.hpp"
 #include "serial/ps_serial_class.hpp"
+
+typedef union {
+	struct {
+		uint8_t     start;
+		uint8_t     lengthH;
+		uint8_t     lengthL;
+	};
+	uint8_t header[3];
+}ps_packet_header_t;
+
+typedef uint16_t ps_packet_checksum_t;
 
 #define STX_CHAR 0x7f
 
@@ -35,13 +45,13 @@ typedef enum {
 #define PS_PARSE_RESULT_NAMES {"Running", "Message", "Checksum"}
 
 class ps_packet_serial_class : public ps_packet_class {
-    
-public:
 
-    unsigned char       *rxmsg;
+public:
+	ps_packet_serial_class(ps_serial_class *_driver);
+	virtual ~ps_packet_serial_class();
     
     parse_result_enum    parse_result;
-    ps_parse_state_enum  parse_state;                ///< Parsing state machine
+    ps_parse_state_enum  parse_state;               ///< Parsing state machine
     uint16_t            checksum;                   ///< Running checksum
     uint8_t             checksumH;                  ///< 1st byte of trailing checksum
     uint16_t            parse_error;                ///< Number of parse errors
@@ -50,18 +60,26 @@ public:
     uint16_t            packetLength;
     uint8_t             packetLengthH;              ///< 1st byte of length
     
-    ps_serial_class      *driver;
+    ps_serial_class      *serial_driver;
 
     //parse an incoming packet
     parse_result_enum parse_next_character(uint8_t c);
     
     void reset_parse_status();
   
-    uint16_t calculate_checksum(uint8_t *packet, size_t length);
+    uint16_t calculate_checksum(uint8_t *packet, int length);
     
     //send packet
-    virtual ps_result_enum send_packet(uint8_t *packet, size_t length) = 0;
+    virtual ps_result_enum send_packet(void *packet, int length) = 0;
     
+protected:
+
+    void *rxmsg;
+
+	void process_serial_error_callback(ps_serial_status_enum stat);
+
+	friend void serial_error_callback(void *arg, ps_serial_class *psc, ps_serial_status_enum stat);
+
 };
 
 #endif /* ps_packet_serial_class_hpp */

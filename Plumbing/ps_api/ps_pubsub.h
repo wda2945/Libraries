@@ -17,11 +17,13 @@
 extern "C" {
 #endif
 
-//suscribe to names topic. Receive a callback when a message is received
-ps_result_enum ps_subscribe(const char * topicName, void (*msgHandler)(void *, size_t));
+typedef void (message_handler_t)(void *, int);
 
-//publish a message to a named topic
-ps_result_enum ps_publish(const char * topicName, void *messageRef, size_t length);
+//suscribe to topic. Receive a callback when a message is received
+ps_result_enum ps_subscribe(ps_topic_id_t topic_id, message_handler_t*);
+
+//publish a message to a topic
+ps_result_enum ps_publish(ps_topic_id_t topic_id, void *message, int length);
 
 #ifdef __cplusplus
 }

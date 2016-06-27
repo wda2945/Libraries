@@ -141,7 +141,7 @@ static int os_tmpname (lua_State *L) {
 //  if (err)
 //    return luaL_error(L, "unable to generate a unique filename");
 //  lua_pushstring(L, buff);
-//  return 1;
+  return 1;
 }
 
 
