@@ -9,6 +9,9 @@
 #ifndef ps_pubsub_linux_hpp
 #define ps_pubsub_linux_hpp
 
+#include <thread>
+using namespace std;
+
 #include "pubsub/ps_pubsub_class.hpp"
 #include "network/ps_network.hpp"
 #include "queue/linux/ps_queue_linux.hpp"
@@ -16,13 +19,14 @@
 //PubSub Singleton
 class ps_pubsub_linux : public ps_pubsub_class {
 protected:
-
+    thread *broker_thread;
+    
     ps_pubsub_linux();
-
+    ~ps_pubsub_linux();
+    
 public:
 
     friend ps_pubsub_class& the_broker();
-    friend void *broker_thread_wrapper(void *arg);
 };
 
 #endif /* ps_pubsub_linux_hpp */

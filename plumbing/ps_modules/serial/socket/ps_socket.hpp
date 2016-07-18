@@ -2,6 +2,8 @@
 //  ps_socket.hpp
 //  RobotFramework
 //
+//  Connected stream socket
+//
 //  Created by Martin Lane-Smith on 5/19/16.
 //  Copyright © 2016 Martin Lane-Smith. All rights reserved.
 //
@@ -12,24 +14,25 @@
 #include "serial/ps_serial_class.hpp"
 
 class ps_socket : public ps_serial_class {
-protected:
-
-	int rxSocket;
-	int txSocket;
-	
-	virtual void action_error_callback(ps_serial_status_enum res);
 
 public:
-	ps_socket(char *name, int socket);
-	virtual ~ps_socket();
+	ps_socket(const char *name, int socket);
+    
+    ~ps_socket();
 
     //send bytes
-    ps_result_enum write_bytes(void *data, int length);
+    ps_result_enum write_bytes(const void *data, int length);
 
     //receive bytes
     bool data_available();
 
     int read_bytes(void *data, int length);
+    
+protected:
+    
+    int rxSocket;
+    int txSocket;
+    
 };
 
 #endif /* ps_socket_server_hpp */

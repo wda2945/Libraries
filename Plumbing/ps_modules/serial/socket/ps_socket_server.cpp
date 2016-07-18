@@ -93,17 +93,17 @@ void ps_socket_server::ServerListenThreadMethod()
 	struct sockaddr client_address;
 	socklen_t client_address_len;
 
-	PS_DEBUG("server: listen thread ready\n");
+	PS_DEBUG("server: listen thread ready");
 
 	while ((listen_socket = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 	{
-		PS_ERROR("server: listen socket() error: %s\n", strerror(errno));
+		PS_ERROR("server: listen socket() error: %s", strerror(errno));
 		sleep(1);
 	}
 	int optval = 1;
 	setsockopt(listen_socket, SOL_SOCKET, SO_REUSEADDR, &optval, 4);
 
-	PS_DEBUG("server: listen socket created\n");
+	PS_DEBUG("server: listen socket created");
 
 	//bind socket address
 	struct sockaddr_in my_address;
@@ -114,21 +114,21 @@ void ps_socket_server::ServerListenThreadMethod()
 
 	while (bind(listen_socket, (struct sockaddr*) &my_address, sizeof(my_address)) == -1)
 	{
-		PS_ERROR("server: bind() error: %s\n", strerror(errno));
+		PS_ERROR("server: bind() error: %s", strerror(errno));
 
 		if (errno == EADDRINUSE) sleep(10);
 
 		sleep(1);
 	}
 
-	PS_DEBUG("server: listen socket ready\n");
+	PS_DEBUG("server: listen socket ready");
 
 	while(1)
 	{
 		//wait for connect
 		while(listen(listen_socket, 10) != 0)
 		{
-			PS_ERROR("server: listen() error %s\n", strerror(errno));
+			PS_ERROR("server: listen() error %s", strerror(errno));
 			sleep(1);
 			//ignore errors, just retry
 		}
@@ -148,7 +148,7 @@ void ps_socket_server::ServerListenThreadMethod()
 
 			snprintf(address, 20, "%i.%i.%i.%i", addrBytes[0], addrBytes[1], addrBytes[2], addrBytes[3]);
 
-			PS_DEBUG("server: connect from %s\n", address);
+			PS_DEBUG("server: connect from %s", address);
 
 			ps_socket *sock = new ps_socket(address, acceptSocket);
 			ps_packet_serial_linux *pkt = new ps_packet_serial_linux(sock);

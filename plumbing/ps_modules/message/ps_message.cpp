@@ -17,20 +17,8 @@
 #include <ctype.h>
 
 #include "ps_message.hpp"
-#include "messages.h"
+//#include "messages.h"
 
-	ps_message::ps_message(char *message_name)
-	{
-
-	}
-	ps_message::ps_message(char *message_name, void *message_struct)
-	{
-
-	}
-	ps_message::ps_message(void *serialized_message)
-	{
-
-	}
 	ps_message::~ps_message()
 	{
 

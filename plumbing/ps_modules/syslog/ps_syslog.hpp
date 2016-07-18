@@ -12,12 +12,7 @@
 
 #include "ps_common.h"
 #include "common/ps_root_class.hpp"
-
-typedef struct {
-    uint8_t severity;
-    char source[PS_SOURCE_LENGTH + 1];
-    char text[PS_MAX_LOG_TEXT + 1];
-} ps_syslog_message_t;
+#include "ps_syslog_message.h"
 
 class ps_syslog_class : public ps_root_class {
 

@@ -17,13 +17,7 @@
 #include <map>
 #include <set>
 
-
-//pubsub message prefix
-typedef struct {
-	ps_packet_source_t		packet_source;
-	ps_packet_type_t 		packet_type;
-	ps_topic_id_t 			topic_id;
-} ps_pubsub_prefix_t;
+#include "pubsub_header.h"
 
 //message to communicate subscribed topics
 typedef struct {
@@ -33,9 +27,12 @@ typedef struct {
 //struct to record subscriptions
 typedef struct {
 	message_handler_t 		*messageHandler;	//used for local clients
-	ps_packet_source_t  	transport_tag;			//used for remote clients
+	ps_packet_source_t  	transport_tag;		//used for remote clients
 	std::set<ps_topic_id_t> topicList;
-}psClient_t;
+} psClient_t;
+
+extern const char *packet_type_names[];
+extern int max_ps_packet;
 
 //PubSub Singleton
 class ps_pubsub_class : public ps_root_class {
@@ -43,21 +40,18 @@ class ps_pubsub_class : public ps_root_class {
 public:
     ////////////////////// PLUMBING CLIENT API
     //register for system packets
-    ps_result_enum register_object(const ps_packet_type_t packet_type, ps_root_class *rcl);
+    ps_result_enum register_object(ps_packet_type_t packet_type, ps_root_class *rcl);
     //send a system packet
-    ps_result_enum publish_packet(const ps_packet_type_t packet_type, void *message, int length);
+    ps_result_enum publish_system_packet(ps_packet_type_t packet_type, const void *message, int length);
 
     ////////////////////// PUBLIC API
     //suscribe to A topic. Receive a callback when a message is received
-    ps_result_enum subscribe(const ps_topic_id_t topicId, message_handler_t *msgHandler);
+    ps_result_enum subscribe(ps_topic_id_t topicId, message_handler_t *msgHandler);
     //publish a message to a topic
-    ps_result_enum publish(const ps_topic_id_t topicId, void *message, int length);
-
-    friend void broker_transport_data_callback(ps_transport_class *pst, void *message, int len);
-    friend void broker_transport_status_callback(ps_transport_class *pst, ps_transport_status_enum pstStatus);
-
+    ps_result_enum publish(ps_topic_id_t topicId, const void *message, int length);
+    
 protected:
-    ps_pubsub_class(){}
+    ps_pubsub_class();
     ~ps_pubsub_class(){}
 	////////////////////// BROKER DATABASE
 	ps_packet_source_t	next_source_tag = 1;
@@ -76,23 +70,31 @@ protected:
 
     /////////////////////// INTERNAL BROKER METHODS
     //manage link subscriptions
-    ps_result_enum subscribe(const ps_topic_id_t topicId, const ps_packet_source_t tag);
-    ps_result_enum unsubscribe_all(const ps_packet_source_t tag);						//remove gone transport
+    ps_result_enum subscribe( ps_topic_id_t topicId,  ps_packet_source_t tag);
+    ps_result_enum unsubscribe_all( ps_packet_source_t tag);						//remove gone transport
 
     //send a message to the subscribers
-    void publish_message(ps_pubsub_prefix_t *prefix, void *message, int length);
+    //user messages
+    void publish_user_message(const void *message, int length);
+    //internal plumbing messages
+    void publish_system_message(const void *message, int length);
 
     //request all subscriptions from remote broker
-    void request_subscriptions(const ps_packet_source_t tag);
+    void request_subscriptions( ps_packet_source_t tag);
     //send all subscriptions to remote broker
-    void send_subscriptions(const ps_packet_source_t tag);
+    void send_subscriptions( ps_packet_source_t tag);
 
     //broker thread
 	void broker_thread_method();
 
+    //callbacks from transport and network
+    void process_observed_data(ps_transport_class *pst, const void *message, int len);
+    void process_observed_event(ps_transport_class *pst, ps_transport_event_enum ev);
+
 	void refresh_network();
 
 	friend ps_pubsub_class& the_broker();
+
 };
 
 ps_pubsub_class& the_broker();

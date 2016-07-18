@@ -14,6 +14,8 @@
 #include <vector>
 #include <map>
 
+typedef void (network_observer_t)(ps_transport_class*, ps_transport_event_enum);
+
 class ps_network : public ps_root_class {
 
 public:
@@ -22,25 +24,16 @@ public:
     void add_transport_to_network(ps_transport_class *pst);
     
     //list the transports
-    void iterate_transports(void (*callback)(ps_transport_class *, ps_transport_status_enum));
+    void iterate_transports(ps_root_class *cb);
 
     //lookup transport
     ps_transport_class *get_transport_by_name(const char *name);
-    ps_transport_status_enum get_transport_status(const char *name);
     
-    //add to listeners vector
-    void add_network_event_listener(void (*_listener)(ps_transport_class*, ps_transport_status_enum));
-    
-    //change of transport status
-    void report_network_event(ps_transport_class *pst, ps_transport_status_enum status);
+    //callback method for transport -> network events
+    void process_observed_event(ps_transport_class *pst, ps_transport_event_enum ev);
 
 protected:
     ps_network();
-
-	//listeners for network events
-    typedef void (*event_listener_t)(ps_transport_class*, ps_transport_status_enum);
-
-    std::vector<event_listener_t> listeners;
 
     //transports in the network
     std::vector<ps_transport_class*> transports;

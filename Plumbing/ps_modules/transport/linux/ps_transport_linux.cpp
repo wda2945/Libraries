@@ -12,211 +12,229 @@
 #include <string.h>
 #include <sys/time.h>
 
-void *transport_linux_send_thread_wrapper(void *arg);
+#include <chrono>
+
+using namespace std::chrono;
+using namespace std;
 
 ps_transport_linux::ps_transport_linux(ps_packet_class *_driver)
-	: ps_transport_class(_driver)
+: ps_transport_class(_driver)
 {
     sendQueue = new ps_queue_linux(max_packet_size, 0);
+    
+    send_thread = new thread([this](){transport_linux_send_thread_method();});
+}
 
-    pthread_t thread;
-    int s = pthread_create(&thread, NULL, transport_linux_send_thread_wrapper, (void*) this);
-	if (s != 0)
-	{
-		PS_ERROR("transport: Thread error %i\n", s);
-	}
+ps_transport_linux::~ps_transport_linux()
+{
+    delete send_thread;
+    delete sendQueue;
 }
 
 //callback function for new data packet
-void ps_transport_linux::packet_data_callback_method(ps_packet_class *pd, void *_pkt, int len)
+void ps_transport_linux::process_observed_data(const void *_pkt, int len)
 {
-    //critical section
-    pthread_mutex_lock(&protocolMtx);
-    
-    process_received_message(_pkt, len);
-
-    pthread_mutex_unlock(&protocolMtx);
-    //end critical section
+    {
+        //critical section
+        unique_lock<mutex> lck {protocolMtx};
+        
+        process_packet_data(_pkt, len);
+    }
     
     //signal send thread
-    pthread_cond_signal(&protocolCond);
+    protocolCond.notify_one();
 }
 
 //callback function for transmission errors
-void  ps_transport_linux::packet_status_callback_method(ps_packet_class *pd, ps_packet_status stat)
+void  ps_transport_linux::process_observed_event(ps_packet_event_t ev)
 {
-    //critical section
-    pthread_mutex_lock(&protocolMtx);
-
-    process_packet_status_callback(stat);
-
-    pthread_mutex_unlock(&protocolMtx);
-    //end critical section
-
+    {
+        //critical section
+        unique_lock<mutex> lck {protocolMtx};
+        
+        process_packet_event(ev);
+    }
+    
     //signal send thread
-    pthread_cond_signal(&protocolCond);
+    protocolCond.notify_one();
 }
 
 void ps_transport_linux::transport_linux_send_thread_method()
 {
-    struct timespec abstime;
-    struct timeval timenow;
-    
-    ps_transport_status_t statusPkt;
+    ps_transport_header_t statusPkt;
     
     while (1)
     {
-        //offline
-        //critical section
-        pthread_mutex_lock(&protocolMtx);
+        //initially offline
+        if (!transport_is_online)
+        {
+            //empty send queue
+            void *pkt;
+            do {
+                pkt = sendQueue->get_next_message(0, nullptr);
+                sendQueue->done_with_message(pkt);
+            } while (pkt);
+            
+            //send a status packet as a poll
+            
+            statusPkt.sequenceNumber = lastSent;
+            statusPkt.lastReceivedSequenceNumber = lastReceived;
+            statusPkt.flags = PS_TRANSPORT_IGNORE_SEQ;
+            
+            //send status poll
+            packet_driver->send_packet(&statusPkt, sizeof(statusPkt));
+            {
+                //critical section
+                unique_lock<mutex> lck {protocolMtx};
+                
+                statusRx = PS_TRANSPORT_RX_WAIT;
+                
+                //wait for a received packet
+                auto now = system_clock::now();
+                protocolCond.wait_until(lck, now + milliseconds(PS_TRANSPORT_REPLYWAIT_MSECS));
+                
+                if (statusRx == PS_TRANSPORT_RX_WAIT) continue; //timeout
+                //critical section end
+            }
+            
+            //reply received - online
+            transport_is_online = true;
+            change_status(PS_TRANSPORT_ONLINE);
+        }
         
-        change_status(PS_TRANSPORT_OFFLINE);
-        statusPkt.sequenceNumber = 0;
-        statusPkt.lastReceivedSequenceNumber = lastReceived;
-        statusPkt.status = statusTx;
-        
-        //send status poll
-        packet_driver->send_packet(&statusPkt, sizeof(statusPkt));
-        
-        statusRx = PS_TRANSPORT_RX_WAIT;
-        
-        gettimeofday(&timenow, NULL);
-        abstime.tv_sec = timenow.tv_sec;
-        abstime.tv_nsec = (timenow.tv_usec * 1000) + (PS_TRANSPORT_REPLYWAIT_MSECS * 1000000);
-        
-        pthread_cond_timedwait(&protocolCond, &protocolMtx, &abstime);
-        
-        if (statusRx == PS_TRANSPORT_RX_WAIT) continue;
-        change_status(PS_TRANSPORT_ONLINE);
-        
-        statusTx = PS_TRANSPORT_IGNORE_SEQ;
-        statusRx = PS_TRANSPORT_RX_IDLE;
-        
-        //critical section end
-        pthread_mutex_unlock(&protocolMtx);
-        
-        while (is_online())
+        while (transport_is_online)
         {
             //wait for a message to send
             int length;
             void *pkt = sendQueue->get_next_message(PS_TRANSPORT_QUEUEWAIT_MSECS, &length);
-            ps_transport_packet_header_t *packet_header = (ps_transport_packet_header_t *) pkt;
-            
-            //critical section
-            pthread_mutex_lock(&protocolMtx);
             
             if (pkt)
             {
+                ps_transport_header_t *packet_header = (ps_transport_header_t *) pkt;
+                
+                switch (statusRx)
+                {
+                    default:
+                        packet_header->flags = 0;
+                        break;
+                    case PS_TRANSPORT_RX_NAK:
+                        packet_header->flags = PS_TRANSPORT_NAK;
+                        break;
+                    case PS_TRANSPORT_RX_DUP:
+                        packet_header->flags = PS_TRANSPORT_DUP;
+                        break;
+                    case PS_TRANSPORT_RX_MSG:
+                        packet_header->flags = PS_TRANSPORT_ACK;
+                        break;
+                    case PS_TRANSPORT_RX_SEQ_ERROR:
+                        packet_header->flags = PS_TRANSPORT_SEQ_ERROR;
+                        break;
+                }
+                
                 int retryCount = PS_TRANSPORT_RETRIES;
                 
-                void *packet = (void*) ( (uint8_t*) pkt + sizeof(ps_transport_packet_header_t));
                 if (++lastSent == 0) lastSent++;
-                packet_header->sequenceNumber = lastSent;
-                packet_header->status = statusTx;
                 
-                do {
-                	packet_header->lastReceivedSequenceNumber = lastReceived;
+                packet_header->lastReceivedSequenceNumber = lastReceived;
+                packet_header->sequenceNumber = lastSent;
+                
+                while(1)
+                {
+                     packet_driver->send_packet(pkt, length);
                     
-                    packet_driver->send_packet(packet, packet_header->length);
-                    
-                    statusRx = PS_TRANSPORT_RX_WAIT;
-                    
-                    gettimeofday(&timenow, NULL);
-                    abstime.tv_sec = timenow.tv_sec;
-                    abstime.tv_nsec = (timenow.tv_usec * 1000) + (PS_TRANSPORT_REPLYWAIT_MSECS * 1000000);
-                    
-                    //wait for Rx packet signal with timeout
-                    pthread_cond_timedwait(&protocolCond, &protocolMtx, &abstime);
-                    
-                    if (statusRx == PS_TRANSPORT_RX_WAIT){
-                        if (--retryCount) continue;
-                        else
+                    {
+                        //critical section
+                        unique_lock<mutex> lck {protocolMtx};
+                        
+                        statusRx = PS_TRANSPORT_RX_WAIT;
+                        
+                        auto now = system_clock::now();
+                        protocolCond.wait_until(lck, now + milliseconds(PS_TRANSPORT_REPLYWAIT_MSECS));
+                        
+                        if (statusRx != PS_TRANSPORT_RX_WAIT) break;
+                        
+                        if (--retryCount == 0)
                         {
+                            transport_is_online = false;
                             change_status(PS_TRANSPORT_OFFLINE);
                             break;
                         }
                     }
-                    statusTx = PS_TRANSPORT_RETX;
                     
-                } while (remoteLastReceived != lastSent);
+                    packet_header->flags |= PS_TRANSPORT_RETX;
+                    
+                }
                 
-                statusRx = PS_TRANSPORT_RX_IDLE;
+                sendQueue->done_with_message(pkt);
             }
             else
             {
-                if (statusRx == PS_TRANSPORT_RX_IDLE)
+                //queue read timeout - send status packet
+                
+                switch (statusRx)
                 {
-                    int retryCount = PS_TRANSPORT_RETRIES;
-                    do {
+                    default:
+                        statusPkt.flags = 0;
+                        break;
+                    case PS_TRANSPORT_RX_NAK:
+                        statusPkt.flags = PS_TRANSPORT_NAK;
+                        break;
+                    case PS_TRANSPORT_RX_DUP:
+                        statusPkt.flags = PS_TRANSPORT_DUP;
+                        break;
+                    case PS_TRANSPORT_RX_MSG:
+                        statusPkt.flags = PS_TRANSPORT_ACK;
+                        break;
+                    case PS_TRANSPORT_RX_SEQ_ERROR:
+                        statusPkt.flags = PS_TRANSPORT_SEQ_ERROR;
+                        break;
+                }
+                
+                statusPkt.sequenceNumber = lastSent;
+                statusPkt.lastReceivedSequenceNumber = lastReceived;
+
+                
+                int retryCount = PS_TRANSPORT_RETRIES;
+                
+                do {
+                    //status packet retries
+                    
+                    //send status poll
+                    packet_driver->send_packet(&statusPkt, sizeof(statusPkt));
+                    {
+                        //critical section
+                        unique_lock<mutex> lck {protocolMtx};
+                        
                         //wait for a signal
                         statusRx = PS_TRANSPORT_RX_WAIT;
                         
-                        gettimeofday(&timenow, NULL);
-                        abstime.tv_sec = timenow.tv_sec;
-                        abstime.tv_nsec = (timenow.tv_usec * 1000) + (PS_TRANSPORT_REPLYWAIT_MSECS * 1000000);
+                        auto now = system_clock::now();
+                        protocolCond.wait_until(lck, now + milliseconds(PS_TRANSPORT_REPLYWAIT_MSECS));
                         
-                        //wait for Rx packet signal with timeout
-                        pthread_cond_timedwait(&protocolCond, &protocolMtx, &abstime);
+                        if (statusRx != PS_TRANSPORT_RX_WAIT) break;
                         
-                        if (statusRx == PS_TRANSPORT_RX_WAIT){
-                            if (--retryCount) continue;
-                            else
-                            {
-                                change_status(PS_TRANSPORT_OFFLINE);
-                                break;
-                            }
+                        if (--retryCount == 0){
+                            transport_is_online = false;
+                            change_status(PS_TRANSPORT_OFFLINE);
+                            break;
                         }
-                        
-                    } while (statusRx == PS_TRANSPORT_RX_WAIT);
-                }
-                
-                //need to send a Status
-                switch (statusRx)
-                {
-                    case PS_TRANSPORT_RX_WAIT:
-                    case PS_TRANSPORT_RX_IDLE:
-                        break;
-                    case PS_TRANSPORT_RX_DUP:
-                    case PS_TRANSPORT_RX_SEQ_ERROR:
-                    case PS_TRANSPORT_RX_NAK:
-                        statusTx = PS_TRANSPORT_NAK;
-                        break;
-                    case PS_TRANSPORT_RX_STATUS:
-                    case PS_TRANSPORT_RX_MSG:
-                        statusTx = PS_TRANSPORT_ACK;
-                        break;
-                }
-                statusPkt.sequenceNumber = 0;
-                statusPkt.lastReceivedSequenceNumber = lastReceived;
-                statusPkt.status = statusTx;
-                
-                packet_driver->send_packet((uint8_t*)&statusPkt, sizeof(statusPkt));
-                
-                statusRx = PS_TRANSPORT_RX_IDLE;
-                
+                    }
+                    
+                } while (statusRx == PS_TRANSPORT_RX_WAIT);
             }
-            
-            //critical section end
-            pthread_mutex_unlock(&protocolMtx);
         }
     }
 }
 
-void *transport_linux_send_thread_wrapper(void *arg)
-{
-     ps_transport_linux *pst = (ps_transport_linux*) arg;
-     pst->transport_linux_send_thread_method();
-     //no return
-     return 0;
-}
-
 //send packet
-void ps_transport_linux::send_packet2(void *packet1, int len1, void *packet2, int len2)
+void ps_transport_linux::send_packet2(const void *packet1, int len1, const void *packet2, int len2)
 {
-	ps_transport_packet_header_t packetHeader;	//dummy for future use
-    sendQueue->copy_3message_parts_to_q(&packetHeader, sizeof(ps_transport_packet_header_t), packet1, len1, packet2, len2);
+    if (!transport_is_online) return;
+    
+    ps_transport_header_t packetHeader;	//dummy for later use
+    sendQueue->copy_3message_parts_to_q(&packetHeader, sizeof(ps_transport_header_t), packet1, len1, packet2, len2);
 }
-void ps_transport_linux::send_packet(void *packet, int length)
+void ps_transport_linux::send_packet(const void *packet, int length)
 {
-	send_packet2(packet, length, nullptr, 0);
+    send_packet2(packet, length, nullptr, 0);
 }

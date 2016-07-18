@@ -14,6 +14,10 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+//subsystems and sources
+typedef enum {SRC_UNKNOWN, SRC_IOSAPP,  SRC_HEXAPOD, SRC_FIDOBBB, SRC_FIDOMCP, SRC_FIDOMOT,
+                        SRC_ROBOT6, SRC_ROBOT7, SRC_ROBOT8, SRC_ROBOT9, SRC_COUNT} Source_t;
+
 //response and error codes
 typedef enum {
     PS_OK,
@@ -35,8 +39,9 @@ typedef enum {
 } ps_result_enum;
 
 typedef uint8_t ps_topic_id_t;
-
 typedef uint16_t event_id_t;
 typedef uint16_t condition_id_t;
+
+#define PS_CONDITIONS_COUNT 64
 
 #endif /* ps_types_h */

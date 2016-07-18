@@ -11,17 +11,16 @@
 
 //Packet prefix defines
 //Packet Types
-const ps_packet_type_t PUBLISH_PACKET 	 		= 0;
-const ps_packet_type_t SUBSCRIBE_PACKET 		= 1;
-const ps_packet_type_t SEND_SUBS_PACKET 		= 2;
-const ps_packet_type_t TRANSPORT_ADDED_PACKET 	= 3;
-const ps_packet_type_t TRANSPORT_REMOVED_PACKET	= 4;
-const ps_packet_type_t TRANSPORT_ONLINE_PACKET 	= 5;
-const ps_packet_type_t TRANSPORT_OFFLINE_PACKET = 6;
 
-const ps_packet_type_t SYSLOG_PACKET			= 7;
-const ps_packet_type_t REGISTRY_PACKET			= 8;
+#define packet_macro(e, name, qos) e,
+typedef enum : ps_packet_type_t {
+#include "ps_packet_macros.h"
+	PACKET_TYPES_COUNT
+} ps_packet_type_enum;
+#undef packet_macro
 
-const ps_packet_type_t PACKET_TYPES_COUNT 		= 10;
+//#define packet_macro(e, name, qos) const ps_packet_type_t  e = e##_ENUM;
+//#include "ps_packet_macros.h"
+//#undef packet_macro
 
 #endif /* ps_common_constants_h */

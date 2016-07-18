@@ -10,12 +10,14 @@
 #ifndef _PS_SYSLOG_LINUX_H
 #define	_PS_SYSLOG_LINUX_H
 
-#include <pthread.h>
+#include <thread>
+using namespace std;
+
 #include "syslog/ps_syslog.hpp"
 #include "queue/linux/ps_queue_linux.hpp"
 
 class ps_syslog_linux : public ps_syslog_class {
-	pthread_t thread;
+	thread *log_thread;
 	ps_queue_linux *log_print_queue;
 	FILE *logfile;
 

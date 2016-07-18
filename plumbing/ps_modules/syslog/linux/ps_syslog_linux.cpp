@@ -16,14 +16,8 @@
 #include "ps_syslog_linux.hpp"
 #include "pubsub/ps_pubsub_class.hpp"
 
-static FILE *plumbing_debug_file;
-
-void *LoggingThreadWrapper(void *arg);
-
 ps_syslog_linux::ps_syslog_linux()
 {
-	plumbing_debug_file = fopen_logfile("plumbing");
-
 	char logfilepath[200];
 	const time_t now = time(NULL);
 	struct tm *timestruct = localtime(&now);
@@ -47,26 +41,13 @@ ps_syslog_linux::ps_syslog_linux()
 	log_print_queue = new ps_queue_linux(sizeof(ps_syslog_message_t), SYSLOG_QUEUE_LENGTH);
 
 	//start log print thread
+    log_thread = new thread([this](){logging_thread_method();});
 
-	int s = pthread_create(&thread, NULL, LoggingThreadWrapper, (void*) this);
-	if (s != 0)
-	{
-		fprintf(stderr, "syslog: pthread_create fail (%s)\n", strerror(errno));
-	}
 }
 
 ps_syslog_linux::~ps_syslog_linux()
 {
-
-	pthread_cancel(thread);
-}
-
-void *LoggingThreadWrapper(void *arg)
-{
-	ps_syslog_linux *sll = (ps_syslog_linux*) arg;
-	sll->logging_thread_method();
-	//does not return
-	return 0;
+    delete log_thread;
 }
 
 void ps_syslog_linux::logging_thread_method()
@@ -75,7 +56,11 @@ void ps_syslog_linux::logging_thread_method()
 
 	while(1)
 	{
-		ps_syslog_message_t *log_msg = (ps_syslog_message_t *) log_print_queue->get_next_message(0, NULL);
+		int len;
+		ps_syslog_message_t *log_msg = (ps_syslog_message_t *) log_print_queue->get_next_message(0, &len);
+		
+		the_broker().publish_system_packet(SYSLOG_PACKET, log_msg, len);
+		
 		print_log_message(log_msg);
 		log_print_queue->done_with_message(log_msg);
 	}
@@ -122,23 +107,16 @@ void ps_syslog_linux::print_log_message(ps_syslog_message_t *log_msg)
 	log_msg->source[PS_SOURCE_LENGTH] = '\0';
 
 	//remove newline
-	int len = strlen(log_msg->text);
+	int len = (int) strlen(log_msg->text);
 	if (log_msg->text[len-1] == '\n') log_msg->text[len-1] = '\0';
 
 	snprintf(printBuff, MAX_MESSAGE, "%02i:%02i:%02i %s@%s: %s\n",
 			timestruct->tm_hour, timestruct->tm_min, timestruct->tm_sec,
 			severity.c_str(), log_msg->source, log_msg->text);
 
-	fprintf(logfile, printBuff);
+	fprintf(logfile, "%s", printBuff);
 	fflush(logfile);
 
-	printf(printBuff);
+	printf("%s", printBuff);
 }
 
-//plumbing debug
-
-//defaults to plumbing.log
-void print_debug_message(const char *text)
-{
-	print_debug_message_to_file(plumbing_debug_file, text);
-}

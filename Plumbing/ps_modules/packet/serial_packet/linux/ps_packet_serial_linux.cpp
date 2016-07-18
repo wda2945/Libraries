@@ -9,74 +9,89 @@
 #include "ps_common.h"
 #include "ps_packet_serial_linux.hpp"
 #include <string.h>
-
-void *packet_serial_rx_thread_wrapper(void *arg);
+#include <unistd.h>
 
 ps_packet_serial_linux::ps_packet_serial_linux(ps_serial_class *_driver)
 		: ps_packet_serial_class(_driver)
 {
-    int s = pthread_create(&thread, NULL, packet_serial_rx_thread_wrapper, (void*) this);
-	if (s != 0)
-	{
-		PS_ERROR("packet: thread error %i\n", s);
-	}
+    packet_thread = new std::thread([this](){packet_serial_rx_thread_method();});
 }
 
-void *packet_serial_rx_thread_wrapper(void *arg)
+ps_packet_serial_linux::~ps_packet_serial_linux()
 {
-	ps_packet_serial_linux *psl = (ps_packet_serial_linux*) arg;
-	psl->packet_serial_rx_thread_method();
-	//no return
-	return 0;
+    delete packet_thread;
 }
 
 void ps_packet_serial_linux::packet_serial_rx_thread_method()
 {
     while (1)
     {
-        unsigned char nextByte;
-        int charsRead;
-        parse_result_enum parseResult = PARSE_OK;
+        unsigned char nextByte = 0;
         
-        reset_parse_status();
-        
-        do {
-            charsRead = serial_driver->read_bytes(&nextByte, 1);
-            if (charsRead == 1)
-            {
-                parseResult = parse_next_character(nextByte);
-            }
-        } while ((parseResult == PARSE_OK) && (charsRead >= 0));
-        
-        if (parseResult == PARSED_MESSAGE)
+        while (nextByte != STX_CHAR)
         {
-            action_data_callback(rxmsg, packetLength);
+            serial_driver->read_bytes(&nextByte, 1);
         }
-        else{
-//            action_error_callback(PS_PARSE_ERROR);
+        
+        ps_packet_header_t packetHeader;
+        
+        int charsRead = serial_driver->read_bytes(&packetHeader, sizeof(ps_packet_header_t));
+        
+        if (charsRead == sizeof(ps_packet_header_t))
+        {
+        	uint16_t length = packetHeader.length1;
+            
+            if ((length <= max_packet_size) && ((packetHeader.length1 ^ packetHeader.length2) == 0))
+            {
+                charsRead = serial_driver->read_bytes(&rxmsg, length);
+                
+                if (charsRead == length)
+                {
+                    if (packetHeader.csum == calculate_checksum((uint8_t*) rxmsg, length))
+                    {
+                        pass_new_data(rxmsg, length);
+   
+                    }
+                    else
+                    {
+                        PS_ERROR("pkt: bad checksum: 0x%x read versus 0x%x",
+                                 packetHeader.csum, calculate_checksum((uint8_t*) rxmsg, length));
+                    }
+                }
+                else
+                {
+                    PS_ERROR("pkt: short read: %i versus %i", charsRead, length);
+                }
+            }
+            else
+            {
+                PS_ERROR("pkt: bad message length: %i, check %i", packetHeader.length1, packetHeader.length2);
+            }
+        }
+        else
+        {
+            PS_ERROR("pkt: bad header read: %i bytes", charsRead);
         }
     }
 }
 
 //send packet
-ps_result_enum ps_packet_serial_linux::send_packet(void *packet, int length)
+static uint8_t stx_char = STX_CHAR;
+
+ps_result_enum ps_packet_serial_linux::send_packet(const void *packet, int length)
 {
     ps_packet_header_t 		packetHeader;
-    ps_packet_checksum_t 	checksum;
     
-    packetHeader.start   = STX_CHAR;
-    packetHeader.lengthH = (length << 8) & 0xff;
-    packetHeader.lengthL = length & 0xff;
-    
-    ps_result_enum res = serial_driver->write_bytes(packetHeader.header, sizeof(packetHeader.header));
+    packetHeader.length1 = length & 0xff;
+    packetHeader.length2 = ~(length & 0xff);
 
+    packetHeader.csum = calculate_checksum((uint8_t*) packet, length);
+
+    ps_result_enum res = serial_driver->write_bytes(&stx_char, 1);
+    if (res != PS_OK) return res;
+    res = serial_driver->write_bytes(&packetHeader, sizeof(ps_packet_header_t));
     if (res != PS_OK) return res;
     
-    serial_driver->write_bytes(packet, length);
-    
-    checksum = calculate_checksum((uint8_t*) packet, length);
-    
-    serial_driver->write_bytes((uint8_t*) &checksum, sizeof(checksum));
-    
-    return PS_OK;
+    res = serial_driver->write_bytes(packet, length);
+    return res;
 }

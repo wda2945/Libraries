@@ -17,24 +17,24 @@ ps_network& the_network()
 
 ps_network::ps_network(){}
 
-void network_transport_status_callback(ps_transport_class *pst, ps_transport_status_enum status)
+void ps_network::process_observed_event(ps_transport_class *pst, ps_transport_event_enum ev)
 {
-    the_network().report_network_event(pst, status);
+    notify_new_event(pst, ev);
 }
 
 void ps_network::add_transport_to_network(ps_transport_class *pst)
 {
 	transports.push_back(pst);
 
-    pst->set_status_callback(&network_transport_status_callback);
-    report_network_event(pst, PS_TRANSPORT_ADDED);
+    pst->add_event_observer(this);
+    notify_new_event(pst, PS_TRANSPORT_ADDED);
 }
 
-void ps_network::iterate_transports(void (*callback)(ps_transport_class *, ps_transport_status_enum))
+void ps_network::iterate_transports(ps_root_class *cb)
 {
     for (const auto pst : transports)
     {
-        (*callback)(pst, PS_TRANSPORT_ADDED);
+        cb->process_observed_event(pst, PS_TRANSPORT_ADDED);
     }
 }
 
@@ -47,29 +47,4 @@ ps_transport_class *ps_network::get_transport_by_name(const char *_name)
     return nullptr;
 }
 
-ps_transport_status_enum ps_network::get_transport_status(const char *_name)
-{
-    ps_transport_class *pst = get_transport_by_name(_name);
-    if (pst != nullptr)
-    {
-        return pst->transport_status;
-    }
-    else
-    {
-        return PS_TRANSPORT_UNKNOWN;
-    }
-}
-
-void ps_network::add_network_event_listener(void (*_listener)(ps_transport_class*, ps_transport_status_enum))
-{
-	listeners.push_back(_listener);
-}
-
-void ps_network::report_network_event(ps_transport_class *pst, ps_transport_status_enum status)
-{
-    for (const auto event_listener : listeners)
-    {
-        (event_listener)(pst,status);
-    }
-}
 

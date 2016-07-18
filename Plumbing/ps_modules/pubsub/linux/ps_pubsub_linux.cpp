@@ -16,31 +16,20 @@ ps_pubsub_class& the_broker()
 	return p;
 }
 
-void *broker_thread_wrapper(void *arg);
-
-ps_pubsub_linux::ps_pubsub_linux()
+ps_pubsub_linux::ps_pubsub_linux() : ps_pubsub_class()
 {
 	//queues for publish and admin messages
-	brokerQueue = new ps_queue_linux(PS_DEFAULT_MAX_PACKET + sizeof(ps_pubsub_prefix_t), 100);
+	brokerQueue = new ps_queue_linux(max_ps_packet + sizeof(ps_pubsub_header_t), 100);
 
 	//start thread for messages
-	pthread_t thread;
-	int s = pthread_create(&thread, NULL, broker_thread_wrapper, (void*) this);
-	if (s != 0)
-	{
-		PS_ERROR("pubsub: Thread error %i\n", s);
-	}
+    broker_thread = new thread([this](){broker_thread_method();});
 
 	//iterate transports
 	//to set data and event callbacks
 	refresh_network();
 }
 
-void *broker_thread_wrapper(void *arg)
+ps_pubsub_linux::~ps_pubsub_linux()
 {
-	//non-member >> member function
-	ps_pubsub_linux *ps = (ps_pubsub_linux*) arg;
-	ps->broker_thread_method();
-	//never returns
-	return 0;
+    delete broker_thread;
 }

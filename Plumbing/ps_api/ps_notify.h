@@ -16,24 +16,32 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+    
+    ////////////////////////// EVENTS
+    
+    typedef uint8_t ps_event_id_t;
+    
+    //Raise an event
+    ps_result_enum ps_notify_event(ps_event_id_t event);
+    
+    typedef void (ps_event_observer_callback_t)(void *arg, ps_event_id_t event);
+    
+    ps_result_enum ps_add_event_observer(ps_event_id_t event, ps_event_observer_callback_t *callback, void *arg);
+    
+    ////////////////////////// CONDITIONS
 
-//Raise a event
-ps_result_enum ps_notify_create(const char *event_name);
-ps_result_enum ps_notify_event(const char *event_name);
-
-typedef void (ps_notify_observer_callback_t)(void *arg);
-ps_result_enum ps_notify_set_observer(const char *event_name, ps_notify_observer_callback_t *callback, void *arg);
-
-//Set a condition
-ps_result_enum ps_condition_create(const char *condition_name);
-ps_result_enum ps_set_condition(const char *condition_name);
-ps_result_enum ps_cancel_condition(const char *condition_name);
-ps_result_enum ps_test_condition(const char *condition_name);
-
-typedef void (ps_condition_observer_callback_t)(void *arg, bool condition_set);
-
-ps_result_enum ps_condition_set_observer(const char *condition_name, ps_condition_observer_callback_t *callback, void *arg);
-
+    typedef uint8_t ps_condition_id_t;
+    
+    //Set/cancel a condition
+    ps_result_enum ps_set_condition(ps_condition_id_t condition);
+    ps_result_enum ps_cancel_condition(ps_condition_id_t condition);
+    
+    bool ps_test_condition(Source_t src, ps_condition_id_t condition);
+    
+    typedef void (ps_condition_observer_callback_t)(void *arg, Source_t src, ps_condition_id_t condition, bool condition_set);
+    
+    ps_result_enum ps_add_condition_observer(Source_t src, ps_condition_id_t condition, ps_condition_observer_callback_t *callback, void *arg);
+    
 #ifdef __cplusplus
 }
 #endif

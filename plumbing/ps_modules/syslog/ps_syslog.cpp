@@ -26,5 +26,5 @@ void _LogMessage(SysLogSeverity_enum _severity, const char *_message, const char
 	strncpy(msg.text, _message, PS_MAX_LOG_TEXT);
 
 	//publish a copy
-	the_broker().publish_packet(SYSLOG_PACKET, &msg, sizeof(ps_syslog_message_t));
+	the_broker().publish_system_packet(SYSLOG_PACKET, &msg, sizeof(ps_syslog_message_t));
 }

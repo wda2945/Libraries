@@ -8,8 +8,8 @@
 #ifndef PS_SYSLOG_H
 #define	PS_SYSLOG_H
 
-#include <stdio.h>
 #include "ps_config.h"
+#include <stdio.h>
 
 //sys logging severity
 typedef enum {

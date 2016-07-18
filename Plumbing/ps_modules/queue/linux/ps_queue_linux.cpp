@@ -11,11 +11,16 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include <chrono>
+using namespace std::chrono;
+
 ps_queue_linux::ps_queue_linux(int entrysize, int preload){
-
-    nextPointerOffset = entrysize;
-    queueEntrySize = nextPointerOffset + sizeof(uint8_t *);
-
+    //round length to multiple of 4 bytes
+    int rounding = (entrysize % 4);
+    nextPointerOffset = entrysize + (rounding > 0 ? 4 - rounding : 0);
+    sizeOffset = nextPointerOffset + sizeof(void *);
+    queueEntrySize = sizeOffset + sizeof(int);
+    
     int i;
     for (i=0; i<preload; i++)
     {
@@ -25,38 +30,50 @@ ps_queue_linux::ps_queue_linux(int entrysize, int preload){
     }
 }
 
+ps_queue_linux::~ps_queue_linux()
+{
+	while(qHead)
+	{
+		void *e = get_next_message(0, nullptr);
+		free(e);
+	}
+
+	while(freelist)
+	{
+		void *e = get_free_entry();
+		free(e);
+	}
+}
+
 void ps_queue_linux::append_queue_entry(void *e)		//appends an allocated message q entry
 {
-	void **next = (void **)((uint8_t*) e + nextPointerOffset);
-    
-    *next = nullptr;
+    set_nextPointer(e, nullptr);
     
     //critical section
-    pthread_mutex_lock(&mtx);
+    mtx.lock();
     
-    int wake = 0;
+    bool wake = false;
     if (qHead == nullptr)
     {
         //Q empty
         qHead = qTail = e;
-        wake = 1;
+        wake = true;
     }
     else
     {
-    	void **tailnext = (void **)((uint8_t*)qTail + nextPointerOffset);
-        *tailnext = e;
+        set_nextPointer(qTail, e);
         qTail = e;
     }
     queueCount++;
     
-    pthread_mutex_unlock(&mtx);
+    mtx.unlock();
     //end critical section
     
-    if (wake) pthread_cond_signal(&cond);
+    if (wake) cond.notify_one();
 }
 
 //appends to queue
-void ps_queue_linux::copy_3message_parts_to_q(void *msg1, int len1, void *msg2, int len2, void *msg3, int len3)
+void ps_queue_linux::copy_3message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2, const void *msg3, int len3)
 {
 	if (len1 + len2 + len3 < nextPointerOffset)
 	{
@@ -64,14 +81,13 @@ void ps_queue_linux::copy_3message_parts_to_q(void *msg1, int len1, void *msg2, 
 
 		if (e != nullptr)
 		{
-			ps_q_size_t *size = (ps_q_size_t*)((uint8_t*) e + sizeOffset);
-			*size = (ps_q_size_t) (len1 + len2 + len3);
+			set_size(e, len1 + len2 + len3);
 
 			if (len1) memcpy(e, msg1, len1);
 			if (len2) memcpy(((uint8_t*) e + len1), msg2, len2);
 			if (len3) memcpy(((uint8_t*) e + len1 + len2), msg3, len3);
 
-			append_queue_entry( e);
+			append_queue_entry(e);
 		}
 	}
 	else
@@ -79,11 +95,11 @@ void ps_queue_linux::copy_3message_parts_to_q(void *msg1, int len1, void *msg2, 
 		PS_ERROR("queue: message too long");
 	}
 }
-void ps_queue_linux::copy_2message_parts_to_q(void *msg1, int len1, void *msg2, int len2)
+void ps_queue_linux::copy_2message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2)
 {
 	copy_3message_parts_to_q(msg1, len1, msg2, len2, nullptr, 0);
 }
-void ps_queue_linux::copy_message_to_q(void *msg, int len)
+void ps_queue_linux::copy_message_to_q(const void *msg, int len)
 {
     copy_3message_parts_to_q(msg, len, nullptr, 0, nullptr, 0);
 }
@@ -91,38 +107,30 @@ void ps_queue_linux::copy_message_to_q(void *msg, int len)
 //waits if empty, returns pointer (call done_with_message!)
 void *ps_queue_linux::get_next_message(int msecs, int *length)
 {
-	void *e;
-    
-    struct timespec abstime;
-    struct timeval timenow;
-    gettimeofday(&timenow, NULL);
-    abstime.tv_sec = timenow.tv_sec;
-    abstime.tv_nsec = (timenow.tv_usec * 1000) + (msecs * 1000000);
-    
     //critical section
-    pthread_mutex_lock(&mtx);
+    unique_lock<mutex> lck {mtx};
     
-    int result = 0;
+    cv_status result {cv_status::no_timeout};
     //empty wait case
-    while (queueCount == 0 && result == 0) {
+    while (queueCount == 0 && result == cv_status::no_timeout) {
         if (msecs)
         {
-            result = pthread_cond_timedwait(&cond, &mtx, &abstime);
+            auto now = system_clock::now();
+            result = cond.wait_until(lck, now + milliseconds(msecs));
         }
         else
         {
-            result = pthread_cond_wait(&cond, &mtx);
+            cond.wait(lck);
         }
     }
     
-    e = qHead;
+    void *e = qHead;
     
     if (e)
     {
-    	void **next = (void **)((uint8_t*) e + nextPointerOffset);
-
-        qHead = *next;
-        *next = nullptr;
+        qHead = get_nextPointer(e);
+        set_nextPointer(e, nullptr);
+        
         if (qHead == nullptr)
         {
             //end of queue
@@ -133,12 +141,9 @@ void *ps_queue_linux::get_next_message(int msecs, int *length)
         
         if (length != nullptr)
         {
-            uint16_t *size = (uint16_t*)((uint8_t*) e + sizeOffset);
-            *length = *size;
+            *length = get_size(e);
         }
     }
-    pthread_mutex_unlock(&mtx);
-    //end critical section
     
     return e;
 }
@@ -153,47 +158,74 @@ int ps_queue_linux::count()
 }
 void ps_queue_linux::done_with_message(void *msg)
 {
-    add_to_freelist(msg);
+    if (msg) add_to_freelist(msg);
 }
+
+////////////////Freelist
 
 void *ps_queue_linux::get_free_entry()				//new broker q entry <- freelist
 {
-	void *entry;
+	void *e;
     
     //critical section
-    pthread_mutex_lock(&freeMtx);
+    freeMtx.lock();
     
     if (freelist == nullptr)
     {
-        entry = new_queue_entry();
+        e = new_queue_entry();
     }
     else
     {
-        entry = freelist;
-        void **next = (void **)((uint8_t*) entry + nextPointerOffset);
-        freelist = *next;
+        e = freelist;
+        freelist = get_nextPointer(e);
     }
     
-    pthread_mutex_unlock(&freeMtx);
+    freeMtx.unlock();
     //end critical section
     
-    return entry;
+    return e;
 }
 
 void *ps_queue_linux::new_queue_entry()
 {
-    return (uint8_t *) calloc(1, queueEntrySize);
+    return malloc(queueEntrySize);
 }
 
 void ps_queue_linux::add_to_freelist(void *e)
 {
     //critical section
-    pthread_mutex_lock(&freeMtx);
+    freeMtx.lock();
 
-    void **next = (void **)((uint8_t*)e + nextPointerOffset);
-    *next = freelist;
+    set_nextPointer(e, freelist);
     freelist = e;
     
-    pthread_mutex_unlock(&freeMtx);
+    freeMtx.unlock();
     //end critical section
+}
+
+///////////////// Helpers
+
+void *ps_queue_linux::get_nextPointer(void *e)
+{
+    uint8_t *eb = (uint8_t*) e;
+    void **next = (void**)(eb + nextPointerOffset);
+    return *next;
+}
+void ps_queue_linux::set_nextPointer(void *e, void *n)
+{
+    uint8_t *eb = (uint8_t*) e;
+    void **next = (void**)(eb + nextPointerOffset);
+    *next = n;
+}
+int ps_queue_linux::get_size(void *e)
+{
+    uint8_t *eb = (uint8_t*) e;
+    int *size = (int*)(eb + sizeOffset);
+    return *size;
+}
+void ps_queue_linux::set_size(void *e, int _size)
+{
+    uint8_t *eb = (uint8_t*) e;
+    int *size = (int*)(eb + sizeOffset);
+    *size = _size;
 }

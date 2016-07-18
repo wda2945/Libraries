@@ -22,6 +22,7 @@ extern "C" {
 
 //debug helper
 void print_debug_message(const char *text);
+void print_error_message(const char *text);
 
 #ifdef __cplusplus
 }

@@ -11,6 +11,7 @@
 
 #include "common/ps_root_class.hpp"
 #include "packet/ps_packet_class.hpp"
+#include "transport/transport_header.h"
 
 typedef enum {
     PS_TRANSPORT_UNKNOWN,
@@ -18,45 +19,40 @@ typedef enum {
     PS_TRANSPORT_OFFLINE,
     PS_TRANSPORT_ADDED,
 	PS_TRANSPORT_REMOVED
-} ps_transport_status_enum;
+} ps_transport_event_enum;
 
-const int PS_TRANSPORT_RETRIES          = 10;
-const int PS_TRANSPORT_QUEUEWAIT_MSECS  = 50;
-const int PS_TRANSPORT_REPLYWAIT_MSECS  = 500;
+#define TRANSPORT_EVENT_NAMES {\
+    "PS_TRANSPORT_UNKNOWN",\
+    "PS_TRANSPORT_ONLINE",\
+    "PS_TRANSPORT_OFFLINE",\
+    "PS_TRANSPORT_ADDED",\
+    "PS_TRANSPORT_REMOVED"}
 
-const uint8_t PS_TRANSPORT_IGNORE_SEQ   = 0x01;
-const uint8_t PS_TRANSPORT_RETX         = 0x02;
+extern const char *transport_event_names[];
+
+//parameters
+const int PS_TRANSPORT_RETRIES          = 10;       //retransmissions -> offline
+const int PS_TRANSPORT_QUEUEWAIT_MSECS  = 50;       //wait on queue for new message = status interval
+const int PS_TRANSPORT_REPLYWAIT_MSECS  = 500;      //wait for ack
+
+//transport flags
+const uint8_t PS_TRANSPORT_IGNORE_SEQ   = 0x01;     //ignore sequence number at start
+const uint8_t PS_TRANSPORT_RETX         = 0x02;     //re-transmission
 const uint8_t PS_TRANSPORT_ACK          = 0x04;
 const uint8_t PS_TRANSPORT_NAK          = 0x08;
+const uint8_t PS_TRANSPORT_SEQ_ERROR    = 0x10;     //out of sequence message
+const uint8_t PS_TRANSPORT_DUP          = 0x20;     //duplicate received
 
 //status Rx
 typedef enum {
     PS_TRANSPORT_RX_IDLE,
-    PS_TRANSPORT_RX_WAIT,
-    PS_TRANSPORT_RX_STATUS,
-    PS_TRANSPORT_RX_DUP,
-    PS_TRANSPORT_RX_SEQ_ERROR,
+    PS_TRANSPORT_RX_WAIT,           //send thread waiting for ack/nack packet
+    PS_TRANSPORT_RX_STATUS,         //status-only received
+    PS_TRANSPORT_RX_DUP,            //duplicate ignored
+    PS_TRANSPORT_RX_SEQ_ERROR,      //out of sequence
     PS_TRANSPORT_RX_NAK,
-    PS_TRANSPORT_RX_MSG
+    PS_TRANSPORT_RX_MSG             //good message received
 }ps_transport_rx_status_enum;
-
-typedef struct {
-    uint16_t length;
-    uint8_t sequenceNumber;
-    uint8_t lastReceivedSequenceNumber;
-    uint8_t status;
-} ps_transport_packet_header_t;
-
-typedef struct {
-    uint8_t sequenceNumber;
-    uint8_t lastReceivedSequenceNumber;
-    uint8_t status;
-} ps_transport_status_t;
-
-class ps_transport_class;
-
-typedef void (transport_data_callback_t)(ps_transport_class*, void *, int);
-typedef void (transport_status_callback_t)(ps_transport_class*, ps_transport_status_enum);
 
 class ps_transport_class : public ps_root_class {
 
@@ -67,53 +63,33 @@ public:
     int max_packet_size;
     ps_packet_class *packet_driver;
     
-    ps_transport_status_enum transport_status;
+    ps_transport_rx_status_enum transport_rx_status;
+    virtual void change_status(ps_transport_event_enum newStatus);
     
-    virtual void change_status(ps_transport_status_enum newStatus);
-    virtual bool is_online();
+    virtual bool is_online() {return transport_is_online;}
     
     //send packet
-    virtual void send_packet(void *packet, int len) = 0;
-    virtual void send_packet2(void *packet1, int len1, void *packet2, int len2) = 0;	//convenience version
+    virtual void send_packet(const void *packet, int len) = 0;
+    virtual void send_packet2(const void *packet1, int len1, const void *packet2, int len2) = 0;	//convenience version
     
-    //set callback to receive packets
-    ps_result_enum set_data_callback(transport_data_callback_t *dc);
-    
-    //set callback to receive packets
-    ps_result_enum set_status_callback(transport_status_callback_t *sc);
-    
-    //callback for new data packet
-    virtual void action_data_callback(void *pkt, int len);
-    
-    //callback for transmission errors
-    virtual void action_status_callback(ps_transport_status_enum stat);
-
 protected:
+    bool transport_is_online {false};
+    ps_transport_event_enum transport_status {PS_TRANSPORT_OFFLINE};
 
-    transport_data_callback_t *data_callback;
-    transport_status_callback_t *status_callback;
-
-    virtual void process_received_message(void *pkt, int len);
-
-    virtual void process_packet_status_callback(ps_packet_status stat);
-
-    virtual void packet_data_callback_method(ps_packet_class *pd, void *_pkt, int len) = 0;
-
-    virtual void packet_status_callback_method(ps_packet_class *pd, ps_packet_status stat) = 0;
-
-    //protocol data
+    //protocol data - serial numbers
     uint8_t lastReceived;
     uint8_t remoteLastReceived;
+    
     uint8_t lastSent;
-    uint8_t remoteLastStatus;
-
-    uint8_t statusTx;
+    
+    uint8_t flags;
+    uint8_t remoteLastFlags;
+    
     ps_transport_rx_status_enum statusRx;
-
-    //callback function for new data packet
-    friend void packet_data_callback(void *arg, ps_packet_class *pd, void *_pkt, int len);
-    //callback function for transmission errors
-    friend void packet_status_callback(void *arg, ps_packet_class *pd, ps_packet_status stat);
+    
+    //////////// Packet -> Transport callback methods
+    void process_packet_data(const void *pkt, int len);
+    void process_packet_event(ps_packet_event_t ev);
 };
 
 #endif /* ps_transport_hpp */
