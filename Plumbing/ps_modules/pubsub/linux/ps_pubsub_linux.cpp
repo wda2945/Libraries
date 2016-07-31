@@ -9,6 +9,7 @@
 #include "ps_common.h"
 #include "ps_pubsub_linux.hpp"
 #include <set>
+#include <signal.h>
 
 ps_pubsub_class& the_broker()
 {
@@ -21,15 +22,30 @@ ps_pubsub_linux::ps_pubsub_linux() : ps_pubsub_class()
 	//queues for publish and admin messages
 	brokerQueue = new ps_queue_linux(max_ps_packet + sizeof(ps_pubsub_header_t), 100);
 
-	//start thread for messages
-    broker_thread = new thread([this](){broker_thread_method();});
+	if (!brokerQueue)
+	{
+		PS_ERROR("pub: failed to create Q");
+	}
+	else
+	{
+		//start thread for messages
+		broker_thread = new thread([this](){linux_broker_thread_method();});
 
-	//iterate transports
-	//to set data and event callbacks
-	refresh_network();
+		//iterate transports
+		//to set data and event callbacks
+		refresh_network();
+	}
 }
 
 ps_pubsub_linux::~ps_pubsub_linux()
 {
     delete broker_thread;
+}
+
+void ps_pubsub_linux::linux_broker_thread_method()
+{
+	const struct sigaction sa {SIG_IGN, 0, 0};
+	sigaction(SIGPIPE, &sa, NULL);
+
+	broker_thread_method();
 }

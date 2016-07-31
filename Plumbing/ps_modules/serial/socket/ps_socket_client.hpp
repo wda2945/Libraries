@@ -32,12 +32,12 @@ typedef union {
 class ps_socket_client  : public ps_socket {
 public:
 
-	ps_socket_client(const char *server_name, const char *ip_address, int port_number);
-    
+    ps_socket_client(const char *server_name, const char *ip_address, int port_number);
     ~ps_socket_client();
 
     bool isConnected(){return (connect_status == PS_CLIENT_CONNECTED);}
     
+    //get a caption for the app
 	void get_client_status_caption(char *buff, int len);
     
 protected:
@@ -45,22 +45,28 @@ protected:
 	char *server_name;
 	char *ip_address;
 	int port_number;
+    
+    //thread to connect to server
     std::thread *connect_thread;
+    
+    //status - see above
 	ps_client_status_enum connect_status;
 
 	IPaddress_t ipAddress;
 	char		ipAddressStr[30];
 
+    //connect thread method
 	void client_connect_thread_method();
 
-	void connect_to_server();
+    //connection attempt method
+	ps_client_status_enum connect_to_server();
 
     int connect_retry(int domain, int type, int protocol, const struct sockaddr *addr, socklen_t alen);
     
 	void set_client_status(ps_client_status_enum stat);
     
     //intercepts socket errors
-    void notify_new_event(ps_serial_status_enum res);
+    void notify_new_event(ps_root_class *rcl, int res) override;
 
 };
 

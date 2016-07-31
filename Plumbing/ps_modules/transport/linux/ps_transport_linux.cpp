@@ -6,13 +6,15 @@
 //  Copyright © 2016 Martin Lane-Smith. All rights reserved.
 //
 
+#include <unistd.h>
+#include <string.h>
+#include <sys/time.h>
+#include <chrono>
+#include <signal.h>
+
 #include "ps_common.h"
 #include "ps_transport_linux.hpp"
 #include "network/ps_network.hpp"
-#include <string.h>
-#include <sys/time.h>
-
-#include <chrono>
 
 using namespace std::chrono;
 using namespace std;
@@ -32,28 +34,24 @@ ps_transport_linux::~ps_transport_linux()
 }
 
 //callback function for new data packet
-void ps_transport_linux::process_observed_data(const void *_pkt, int len)
+void ps_transport_linux::process_observed_data(ps_root_class *src, const void *_pkt, int len)
 {
-    {
-        //critical section
-        unique_lock<mutex> lck {protocolMtx};
+    //critical section
+    unique_lock<mutex> lck {protocolMtx};
         
-        process_packet_data(_pkt, len);
-    }
+    ps_transport_class::process_observed_data(src, _pkt, len);
     
     //signal send thread
     protocolCond.notify_one();
 }
 
 //callback function for transmission errors
-void  ps_transport_linux::process_observed_event(ps_packet_event_t ev)
+void  ps_transport_linux::process_observed_event(ps_root_class *src, int ev)
 {
-    {
-        //critical section
-        unique_lock<mutex> lck {protocolMtx};
+    //critical section
+    unique_lock<mutex> lck {protocolMtx};
         
-        process_packet_event(ev);
-    }
+    ps_transport_class::process_observed_event(src, ev);
     
     //signal send thread
     protocolCond.notify_one();
@@ -63,11 +61,16 @@ void ps_transport_linux::transport_linux_send_thread_method()
 {
     ps_transport_header_t statusPkt;
     
+	const struct sigaction sa {SIG_IGN, 0, 0};
+	sigaction(SIGPIPE, &sa, NULL);
+
     while (1)
     {
         //initially offline
         if (!transport_is_online)
         {
+            sleep(1);
+            
             //empty send queue
             void *pkt;
             do {
@@ -82,6 +85,8 @@ void ps_transport_linux::transport_linux_send_thread_method()
             statusPkt.flags = PS_TRANSPORT_IGNORE_SEQ;
             
             //send status poll
+//            PS_DEBUG("trns: tx status packet");
+            
             packet_driver->send_packet(&statusPkt, sizeof(statusPkt));
             {
                 //critical section
@@ -91,14 +96,18 @@ void ps_transport_linux::transport_linux_send_thread_method()
                 
                 //wait for a received packet
                 auto now = system_clock::now();
+                
                 protocolCond.wait_until(lck, now + milliseconds(PS_TRANSPORT_REPLYWAIT_MSECS));
                 
-                if (statusRx == PS_TRANSPORT_RX_WAIT) continue; //timeout
+                if (statusRx == PS_TRANSPORT_RX_WAIT){
+//                    PS_DEBUG("trns: status packet timeout");
+                    continue; //timeout
+                }
                 //critical section end
             }
             
+            PS_DEBUG("trns: online");
             //reply received - online
-            transport_is_online = true;
             change_status(PS_TRANSPORT_ONLINE);
         }
         
@@ -110,6 +119,8 @@ void ps_transport_linux::transport_linux_send_thread_method()
             
             if (pkt)
             {
+//                PS_DEBUG("trns: packet to send");
+
                 ps_transport_header_t *packet_header = (ps_transport_header_t *) pkt;
                 
                 switch (statusRx)
@@ -155,7 +166,7 @@ void ps_transport_linux::transport_linux_send_thread_method()
                         
                         if (--retryCount == 0)
                         {
-                            transport_is_online = false;
+                            PS_DEBUG("trns: tx failed");
                             change_status(PS_TRANSPORT_OFFLINE);
                             break;
                         }
@@ -189,7 +200,7 @@ void ps_transport_linux::transport_linux_send_thread_method()
                         statusPkt.flags = PS_TRANSPORT_SEQ_ERROR;
                         break;
                 }
-                
+                statusPkt.flags |= PS_TRANSPORT_IGNORE_SEQ;
                 statusPkt.sequenceNumber = lastSent;
                 statusPkt.lastReceivedSequenceNumber = lastReceived;
 
@@ -198,7 +209,8 @@ void ps_transport_linux::transport_linux_send_thread_method()
                 
                 do {
                     //status packet retries
-                    
+//                    PS_DEBUG("trns: tx status packet");
+
                     //send status poll
                     packet_driver->send_packet(&statusPkt, sizeof(statusPkt));
                     {
@@ -214,7 +226,7 @@ void ps_transport_linux::transport_linux_send_thread_method()
                         if (statusRx != PS_TRANSPORT_RX_WAIT) break;
                         
                         if (--retryCount == 0){
-                            transport_is_online = false;
+                            PS_DEBUG("trns: tx failed");
                             change_status(PS_TRANSPORT_OFFLINE);
                             break;
                         }
@@ -229,7 +241,10 @@ void ps_transport_linux::transport_linux_send_thread_method()
 //send packet
 void ps_transport_linux::send_packet2(const void *packet1, int len1, const void *packet2, int len2)
 {
-    if (!transport_is_online) return;
+    if (!transport_is_online) {
+//        PS_DEBUG("trns: offline");
+        return;
+    }
     
     ps_transport_header_t packetHeader;	//dummy for later use
     sendQueue->copy_3message_parts_to_q(&packetHeader, sizeof(ps_transport_header_t), packet1, len1, packet2, len2);

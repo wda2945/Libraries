@@ -20,8 +20,16 @@ public:
     ps_syslog_ios(new_syslog_message_t *nsm);
 	~ps_syslog_ios();
 
-	void message_handler(void *msg, int length);
+    void message_handler(ps_packet_source_t packet_source,
+                         ps_packet_type_t   packet_type,
+                         const void *msg, int length) override;
+    
     new_syslog_message_t *new_syslog_message;
+    
+    //observer callbacks
+    void process_observed_data(ps_root_class *src, const void *msg, int length) override {}
+    void process_observed_event(ps_root_class *src, int event) override {}
+
 };
 
 #endif	/* _PS_SYSLOG_IOS_H */

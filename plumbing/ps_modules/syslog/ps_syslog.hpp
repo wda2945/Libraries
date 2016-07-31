@@ -15,8 +15,18 @@
 #include "ps_syslog_message.h"
 
 class ps_syslog_class : public ps_root_class {
-
+public:
+    ps_syslog_class()  : ps_root_class(std::string("syslog")){}
+    
+    virtual void message_handler(ps_packet_source_t packet_source,
+                                 ps_packet_type_t   packet_type,
+                                 const void *msg, int length) override {}
+private:
+    //observer callbacks
+    virtual void process_observed_data(ps_root_class *src, const void *msg, int length) override {}
+    virtual void process_observed_event(ps_root_class *src, int event) override {}
 };
+
 
 #endif	/* _PS_SYSLOG_H */
 

@@ -9,6 +9,7 @@
 #ifndef ps_transport_hpp
 #define ps_transport_hpp
 
+#include <set>
 #include "common/ps_root_class.hpp"
 #include "packet/ps_packet_class.hpp"
 #include "transport/transport_header.h"
@@ -60,10 +61,16 @@ public:
     ps_transport_class(ps_packet_class *driver);
     virtual ~ps_transport_class();
 
-    int max_packet_size;
+    std::set<ps_topic_id_t> topicList;  //subscribed topics
+    
+    Source_t transport_source;          //generally, subsystem id
+    
+    int max_packet_size;                //from broker
+    
     ps_packet_class *packet_driver;
     
     ps_transport_rx_status_enum transport_rx_status;
+    
     virtual void change_status(ps_transport_event_enum newStatus);
     
     virtual bool is_online() {return transport_is_online;}
@@ -74,6 +81,7 @@ public:
     
 protected:
     bool transport_is_online {false};
+    
     ps_transport_event_enum transport_status {PS_TRANSPORT_OFFLINE};
 
     //protocol data - serial numbers
@@ -86,10 +94,10 @@ protected:
     uint8_t remoteLastFlags;
     
     ps_transport_rx_status_enum statusRx;
-    
-    //////////// Packet -> Transport callback methods
-    void process_packet_data(const void *pkt, int len);
-    void process_packet_event(ps_packet_event_t ev);
+
+public:
+    void process_observed_data(ps_root_class *src, const void *msg, int length) override;
+    void process_observed_event(ps_root_class *src, int event) override;
 };
 
 #endif /* ps_transport_hpp */

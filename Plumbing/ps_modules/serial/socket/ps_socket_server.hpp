@@ -9,7 +9,7 @@
 #ifndef ps_socket_server_hpp
 #define ps_socket_server_hpp
 
-#include "pthread.h"
+#include <thread>
 
 extern bool ping_response_received;
 
@@ -17,8 +17,11 @@ class ps_socket_server {
 	int listen_port_number;
 	int listen_socket;
 
-	pthread_t listenThread;
-	pthread_t pingThread;
+	bool ping_response_received;
+	char *pingTarget;
+
+	std::thread *listenThread;
+	std::thread *pingThread;
 
 public:
 
@@ -26,7 +29,7 @@ public:
 	~ps_socket_server();
 
 	void ServerListenThreadMethod();
-
+	void ServerPingThreadMethod();
 };
 
 #endif /* ps_socket_server_hpp */

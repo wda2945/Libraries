@@ -15,6 +15,7 @@
 typedef struct {
     ps_packet_source_t		packet_source;
     ps_packet_type_t 		packet_type;
+    ps_topic_id_t           topic_id;
 } ps_pubsub_header_t;
 
 #endif /* pubsub_header_h */

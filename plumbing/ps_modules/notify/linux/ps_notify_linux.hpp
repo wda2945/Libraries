@@ -19,13 +19,7 @@ public:
     ~ps_notify_linux();
     
     std::thread *conditionsThread;
-    
-    void message_handler(ps_packet_source_t packet_source,
-                                 ps_packet_type_t   packet_type,
-                                    const void *msg, int length);
-    
-    void notify_conditions_thread();
-    
+
 };
 
 #endif /* ps_notify_linux_hpp */

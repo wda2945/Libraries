@@ -9,18 +9,17 @@
 #include "ps_packet_serial_class.hpp"
 
 
-ps_packet_serial_class::ps_packet_serial_class(ps_serial_class *_driver)
-: ps_packet_class(_driver->name, 0)
+ps_packet_serial_class::ps_packet_serial_class(ps_serial_class *_driver) : ps_packet_class(_driver->name)
 {
 	serial_driver = _driver;
 	serial_driver->add_event_observer(this);
 
-    rxmsg = malloc(max_packet_size);
-
-    if (rxmsg == NULL)
-    {
-        PS_ERROR("packet: no memory");
-    }
+//    rxmsg = static_cast<uint8_t*>(malloc(max_packet_size));
+//
+//    if (rxmsg == NULL)
+//    {
+//        PS_ERROR("packet: no memory");
+//    }
 }
 ps_packet_serial_class::~ps_packet_serial_class()
 {
@@ -28,33 +27,36 @@ ps_packet_serial_class::~ps_packet_serial_class()
 	free(rxmsg);
 }
 
-
-void ps_packet_serial_class::process_observed_event(ps_serial_status_enum stat)
+//serial driver event
+void ps_packet_serial_class::process_observed_event(ps_root_class *src, int _event)
 {
+    ps_serial_status_enum stat = static_cast<ps_serial_status_enum>(_event);
+    
 	switch(stat)
 	{
 	case PS_SERIAL_OFFLINE:
-		notify_new_event(PS_PACKET_OFFLINE);
+		notify_new_event(this, PS_PACKET_OFFLINE);
 		break;
 	case PS_SERIAL_WRITE_ERROR:
 	case PS_SERIAL_READ_ERROR:
-		notify_new_event(PS_PACKET_ERROR);
+		notify_new_event(this, PS_PACKET_ERROR);
 		break;
 	case PS_SERIAL_ONLINE:
-		notify_new_event(PS_PACKET_ONLINE);
+		notify_new_event(this, PS_PACKET_ONLINE);
 		break;
 	}
 }
 
-uint16_t ps_packet_serial_class::calculate_checksum(const uint8_t *_packet, int length)
+uint16_t ps_packet_serial_class::calculate_checksum(const uint8_t *packet, int length)
 {
     int i;
     int checksum = 0;
-    uint8_t *packet = (uint8_t*)_packet;
     
     for (i=0; i<length; i++)
     {
-        checksum += packet[i];
+        int byte = *packet;
+        checksum += byte;
+        packet++;
     }
     return (checksum & 0xffff);
 }

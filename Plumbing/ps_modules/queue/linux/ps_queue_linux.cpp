@@ -1,4 +1,4 @@
-//
+    //
 //  ps_queue_linux.cpp
 //  RobotFramework
 //
@@ -48,25 +48,25 @@ ps_queue_linux::~ps_queue_linux()
 void ps_queue_linux::append_queue_entry(void *e)		//appends an allocated message q entry
 {
     set_nextPointer(e, nullptr);
-    
-    //critical section
-    mtx.lock();
-    
     bool wake = false;
-    if (qHead == nullptr)
-    {
-        //Q empty
-        qHead = qTail = e;
-        wake = true;
-    }
-    else
-    {
-        set_nextPointer(qTail, e);
-        qTail = e;
-    }
-    queueCount++;
     
-    mtx.unlock();
+    {
+        //critical section
+        unique_lock<mutex> lck {mtx};
+        
+        if (qHead == nullptr)
+        {
+            //Q empty
+            qHead = qTail = e;
+            wake = true;
+        }
+        else
+        {
+            set_nextPointer(qTail, e);
+            qTail = e;
+        }
+        queueCount++;
+    }
     //end critical section
     
     if (wake) cond.notify_one();
@@ -75,7 +75,7 @@ void ps_queue_linux::append_queue_entry(void *e)		//appends an allocated message
 //appends to queue
 void ps_queue_linux::copy_3message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2, const void *msg3, int len3)
 {
-	if (len1 + len2 + len3 < nextPointerOffset)
+	if (len1 + len2 + len3 <= nextPointerOffset)
 	{
 		void *e = get_free_entry();
 
@@ -104,24 +104,34 @@ void ps_queue_linux::copy_message_to_q(const void *msg, int len)
     copy_3message_parts_to_q(msg, len, nullptr, 0, nullptr, 0);
 }
 
-//waits if empty, returns pointer (call done_with_message!)
+//returns pointer (call done_with_message!)
+//msecs < 0 waits for ever
+//msecs == 0 does not wait
+//msecs > 0 waits x millisecs
 void *ps_queue_linux::get_next_message(int msecs, int *length)
 {
     //critical section
     unique_lock<mutex> lck {mtx};
     
+    if ((queueCount == 0) && (msecs == 0))
+    {
+        return nullptr;
+    }
+    
     cv_status result {cv_status::no_timeout};
     //empty wait case
-    while (queueCount == 0 && result == cv_status::no_timeout) {
-        if (msecs)
-        {
+    
+    while (queueCount == 0 && result == cv_status::no_timeout)
+    {
+    	if (msecs > 0)
+    	{
             auto now = system_clock::now();
             result = cond.wait_until(lck, now + milliseconds(msecs));
-        }
-        else
-        {
-            cond.wait(lck);
-        }
+    	}
+    	else
+    	{
+    		cond.wait(lck);;
+    	}
     }
     
     void *e = qHead;

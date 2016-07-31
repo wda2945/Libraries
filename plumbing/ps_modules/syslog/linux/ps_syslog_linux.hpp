@@ -25,10 +25,14 @@ public:
 	ps_syslog_linux();
 	~ps_syslog_linux();
 
+	void message_handler(ps_packet_source_t packet_source, ps_packet_type_t   packet_type, const void *msg, int length) override;
+
+protected:
+
 	void logging_thread_method();
 	void print_log_message(ps_syslog_message_t *log_msg);
 
-	void message_handler(void *msg, int length);
+	DEFINE_MUTEX(printlogMtx);
 };
 
 #endif	/* _PS_SYSLOG_LINUX_H */

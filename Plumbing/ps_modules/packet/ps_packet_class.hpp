@@ -21,8 +21,9 @@ typedef enum {
 class ps_packet_class : public ps_root_class {
     
 public:
-    ps_packet_class(const char *name, int max_packet);
-    ps_packet_class(std::string name, int max_packet);
+    ps_packet_class(const char *name);
+    ps_packet_class(std::string name);
+
     virtual ~ps_packet_class();
     
     uint16_t            max_packet_size;            ///< max size of rxmsg buffer
@@ -32,9 +33,11 @@ public:
     //send packet call from transport
     virtual ps_result_enum send_packet(const void *packet, int length) = 0;
     
-protected:
+public:
 
-
+    //data and events from the serial layer
+    virtual void process_observed_data(ps_root_class *src, const void *msg, int length) override = 0;
+    virtual void process_observed_event(ps_root_class *src, int event) override = 0;
 };
 
 #endif /* ps_packet_class_hpp */

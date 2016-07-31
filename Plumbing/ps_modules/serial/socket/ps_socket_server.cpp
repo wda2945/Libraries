@@ -30,51 +30,35 @@
 
 #include "ping.h"
 
-void *ServerListenThreadWrapper(void *arg);
-void *ServerPingThread(void *arg);
-
 ps_socket_server::ps_socket_server(int _listen_port_number, const char *ping_target)
 {
 	listen_port_number = _listen_port_number;
+	pingTarget = strdup(ping_target);
 
 	//create agent Listen thread
-	int s = pthread_create(&listenThread, NULL, ServerListenThreadWrapper, (void*) this);
-	if (s != 0) {
-		LogError("server: Listen thread create failed: %s\n", strerror(s));
-	}
+	listenThread = new std::thread([this](){ServerListenThreadMethod();});
 
 	if (ping_target)
 	{
 		//create agent Ping thread
-		s = pthread_create(&pingThread, NULL, ServerPingThread, (void*) ping_target);
-		if (s != 0) {
-			LogError("server: Ping thread create failed: %s\n", strerror(s));
-		}
+		pingThread = new std::thread([this](){ServerPingThreadMethod();});
 	}
 }
 ps_socket_server::~ps_socket_server()
 {
-	pthread_cancel(listenThread);
-	if (pingThread) pthread_cancel(pingThread);
+	delete listenThread;
+	if (pingThread) delete pingThread;
 
 	close(listen_socket);
-}
-void *ServerListenThreadWrapper(void *arg)
-{
-	ps_socket_server *ss = (ps_socket_server*) arg;
-	ss->ServerListenThreadMethod();
-	//no return
-	return 0;
 }
 
 //thread to ping the gateway every 10 seconds
 bool ping_response_received;
-void *ServerPingThread(void *arg)
+void ps_socket_server::ServerPingThreadMethod()
 {
-	char *target = (char*) arg;
 	while (1)
 	{
-		if (pingServer(target) > 0)
+		if (pingServer(pingTarget) > 0)
 		{
 			ping_response_received = true;
 		}
@@ -85,13 +69,15 @@ void *ServerPingThread(void *arg)
 
 		sleep(10);
 	}
-	return 0;
 }
 
 void ps_socket_server::ServerListenThreadMethod()
 {
 	struct sockaddr client_address;
 	socklen_t client_address_len;
+
+	const struct sigaction sa {SIG_IGN, 0, 0};
+	sigaction(SIGPIPE, &sa, NULL);
 
 	PS_DEBUG("server: listen thread ready");
 
@@ -153,7 +139,12 @@ void ps_socket_server::ServerListenThreadMethod()
 			ps_socket *sock = new ps_socket(address, acceptSocket);
 			ps_packet_serial_linux *pkt = new ps_packet_serial_linux(sock);
 			ps_transport_linux *trns = new ps_transport_linux(pkt);
+
+			trns->transport_source = SRC_IOSAPP;	//TODO: handle multiple connections
+
 			the_network().add_transport_to_network(trns);
+
+			sock->set_serial_status(PS_SERIAL_ONLINE);
 		}
 	}
 

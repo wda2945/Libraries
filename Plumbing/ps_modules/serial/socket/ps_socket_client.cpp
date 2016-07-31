@@ -24,17 +24,12 @@
 
 #include "serial/socket/ps_socket_client.hpp"
 
-#include "packet/serial_packet/linux/ps_packet_serial_linux.hpp"
-#include "transport/linux/ps_transport_linux.hpp"
-#include "network/ps_network.hpp"
-
-ps_socket_client::ps_socket_client(const char *_server_name, const char *_ip_address, int _port_number) :
-	ps_socket(_server_name, 0)
+ps_socket_client::ps_socket_client(const char *_server_name, const char *_ip_address, int _port_number): ps_socket(_server_name, 0)
 {
 	server_name = strdup(_server_name);
 	if (_ip_address) ip_address = strdup(_ip_address);
 	port_number = _port_number;
-
+    
 	//create connect thread
     connect_thread = new std::thread([this](){client_connect_thread_method();});
 }
@@ -48,12 +43,6 @@ void ps_socket_client::client_connect_thread_method()
 {
 	struct hostent *server;
 
-    ps_packet_serial_linux *pkt = new ps_packet_serial_linux(this);
-    ps_transport_linux *trns = new ps_transport_linux(pkt);
-    the_network().add_transport_to_network(trns);
-    
-//    ps_serial_class::action_error_callback(PS_SERIAL_OFFLINE, false);
-
     PS_DEBUG("sock: connect thread started");
     
     while (1)
@@ -63,6 +52,7 @@ void ps_socket_client::client_connect_thread_method()
         switch(connect_status)
         {
             case PS_CLIENT_CONNECTED:
+                sleep(1);
                 break;
             default:
                 
@@ -77,10 +67,10 @@ void ps_socket_client::client_connect_thread_method()
                     ipAddress.bytes[1] = b1;
                     ipAddress.bytes[2] = b2;
                     ipAddress.bytes[3] = b3;
-                    connect_to_server();
+                    set_client_status(connect_to_server());
                 }
                 
-                if (connect_status == PS_CLIENT_LOST_CONNECTION) continue;
+                if (connect_status == PS_CLIENT_CONNECTED) continue;
                 
                 //next try Bonjour
                 if (server_name)
@@ -94,7 +84,7 @@ void ps_socket_client::client_connect_thread_method()
                     if (server != NULL)
                     {
                         memcpy(ipAddress.bytes, server->h_addr, 4);
-                        connect_to_server();
+                        set_client_status(connect_to_server());
                     }
                 }
                 break;
@@ -102,34 +92,8 @@ void ps_socket_client::client_connect_thread_method()
     }
 }
 
-#define MAXSLEEP 128
-int ps_socket_client::connect_retry(int domain, int type, int protocol, const struct sockaddr *addr, socklen_t alen)
+ps_client_status_enum ps_socket_client::connect_to_server()
 {
-    int numsec, fd;
-    
-    for (numsec = 1; numsec < MAXSLEEP; numsec <<= 1)
-    {
-        if ((fd = socket(domain, type, protocol)) < 0)
-        {
-            return -1;
-        }
-        if (connect(fd, addr, alen) == 0)
-        {
-            //accepted
-            return fd;
-        }
-        close(fd);
-        
-        //delay
-        if (numsec <= MAXSLEEP/2)
-            sleep(numsec);
-    }
-    return(-1);
-}
-
-void ps_socket_client::connect_to_server()
-{
-
     struct sockaddr_in serverSockAddress;
 
     sprintf(ipAddressStr, "%i.%i.%i.%i", ipAddress.bytes[0], ipAddress.bytes[1], ipAddress.bytes[2], ipAddress.bytes[3]);
@@ -142,38 +106,46 @@ void ps_socket_client::connect_to_server()
     serverSockAddress.sin_addr.s_addr = ipAddress.address;
 
     //create socket & connect
-    rxSocket = connect_retry(AF_INET, SOCK_STREAM, 0,
-                (const struct sockaddr*) &serverSockAddress, sizeof(serverSockAddress));
-    
-    if (rxSocket < 0)
+    for (int i=0; i < 5; i++)
     {
-        PS_ERROR("sock: connect error");
-    	set_client_status(PS_CLIENT_CONNECT_ERROR);
+        if ((rxSocket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        {
+            PS_ERROR("sock: create error: %s", strerror(errno));
+            return(PS_CLIENT_CONNECT_ERROR);
+        }
+        else if (connect(rxSocket, (const struct sockaddr*) &serverSockAddress, sizeof(serverSockAddress)) == 0)
+        {
+            //accepted
+            PS_DEBUG("sock: connected");
+            //dup a socket for the send
+            txSocket = dup(rxSocket);
+            return(PS_CLIENT_CONNECTED);
+        }
+        else
+        {
+            close(rxSocket);
+        }
+        sleep(1);
     }
-    else
-    {
-        PS_ERROR("sock: connected");
-        //dup a socket for the send
-        txSocket = dup(rxSocket);
-    	set_client_status(PS_CLIENT_CONNECTED);
-    }
+    PS_ERROR("sock: connect error");
+    return(PS_CLIENT_CONNECT_ERROR);
 }
 
-void ps_socket_client::notify_new_event(ps_serial_status_enum res)
+void ps_socket_client::notify_new_event(ps_root_class *rcl, int _res)
 {
+    ps_serial_status_enum res = static_cast<ps_serial_status_enum>(_res);
     switch(res)
     {
         case PS_SERIAL_WRITE_ERROR:
         case PS_SERIAL_READ_ERROR:
-            set_client_status(PS_CLIENT_LOST_CONNECTION);
         case PS_SERIAL_OFFLINE:
             close(rxSocket);
             close(txSocket);
             txSocket = rxSocket = 0;
-            ps_serial_class::notify_new_event(PS_SERIAL_OFFLINE);
+            set_client_status(PS_CLIENT_LOST_CONNECTION);
             break;
         default:
-            ps_serial_class::notify_new_event(res);
+            ps_serial_class::notify_new_event(rcl, res);
             break;
     }
 }
@@ -187,14 +159,14 @@ void ps_socket_client::set_client_status(ps_client_status_enum stat)
 	case PS_CLIENT_SEARCHING:
 	case PS_CLIENT_CONNECTING:
 	case PS_CLIENT_CONNECT_ERROR:
-        ps_serial_class::notify_new_event(PS_SERIAL_OFFLINE);
+        ps_serial_class::notify_new_event(this, PS_SERIAL_OFFLINE);
 	default:
 		break;
 	case PS_CLIENT_CONNECTED:
-		ps_serial_class::notify_new_event(PS_SERIAL_ONLINE);
+		ps_serial_class::notify_new_event(this, PS_SERIAL_ONLINE);
 		break;
 	case PS_CLIENT_LOST_CONNECTION:
-		notify_new_event(PS_SERIAL_OFFLINE);
+		ps_serial_class::notify_new_event(this, PS_SERIAL_OFFLINE);
 		break;
 	}
 }

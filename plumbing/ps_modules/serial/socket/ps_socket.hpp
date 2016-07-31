@@ -21,17 +21,19 @@ public:
     ~ps_socket();
 
     //send bytes
-    ps_result_enum write_bytes(const void *data, int length);
+    ps_result_enum write_bytes(const void *data, int length) override;
 
     //receive bytes
-    bool data_available();
+    bool data_available() override;
 
-    int read_bytes(void *data, int length);
+    int read_bytes(void *data, int length) override;
     
+    void set_serial_status(ps_serial_status_enum s);
+
 protected:
     
-    int rxSocket;
-    int txSocket;
+    int rxSocket {-1};
+    int txSocket {-1};
     
 };
 

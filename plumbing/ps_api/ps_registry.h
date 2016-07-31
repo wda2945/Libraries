@@ -28,12 +28,14 @@ typedef uint8_t ps_registry_datatype_t;
 
 //Usage flags
 
-#define PS_REGISTRY_READ_ONLY 	0x0		//read-only
+#define PS_REGISTRY_INVALID_FLAGS 0x0
+
 #define PS_REGISTRY_SRC_WRITE 	0x1    	//owner only can write
 #define PS_REGISTRY_OTHER_WRITE	0x2    	//owner only can write
 #define PS_REGISTRY_ANY_WRITE 	0x3    	//any user can write
 #define PS_REGISTRY_LOCAL		0x4    	//do not promulgate
 #define PS_REGISTRY_PRIORITY	0x8		//promulgate immediately
+#define PS_REGISTRY_READ_ONLY 	0x10		//read-only
 
 #define PS_REGISTRY_DEFAULT (PS_REGISTRY_SRC_WRITE)
 

@@ -40,6 +40,10 @@ public:
 protected:
 	ps_serial_status_enum serial_status;
 
+public:
+    //observer callbacks
+    void process_observed_data(ps_root_class *src, const void *msg, int length){}
+    void process_observed_event(ps_root_class *src, int event) {}
 };
 
 #endif /* ps_serial_class_hpp */

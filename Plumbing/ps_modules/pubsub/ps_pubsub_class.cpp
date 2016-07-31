@@ -13,9 +13,7 @@
 #include "syslog/ps_syslog_message.h"
 #include "registry/ps_registry_message.h"
 
-int max_ps_packet {0};
-
-ps_pubsub_class::ps_pubsub_class()
+ps_pubsub_class::ps_pubsub_class() : ps_root_class(std::string("broker"))
 {
 	int syslog_pkt 		= sizeof(ps_syslog_message_t);
 	int registry_pkt 	= sizeof(ps_update_packet_t);
@@ -23,215 +21,195 @@ ps_pubsub_class::ps_pubsub_class()
 
 #define max(a,b) (a > b ? a : b)
 
-	max_ps_packet = max(syslog_pkt, max(registry_pkt, user_pkt));
+	max_ps_packet = max(syslog_pkt, max(registry_pkt, user_pkt)) + sizeof(ps_pubsub_header_t) + 8;
 }
 ////////////////////////////// INTERNAL BROKER METHODS
 
 void ps_pubsub_class::broker_thread_method()
 {
     PS_DEBUG("pub: broker thread started");
-    request_subscriptions(0);	//at startup
     
     while(1)
     {
         int len;
         //next message from queue
-        void *q_message = brokerQueue->get_next_message(0, &len);
-        
-        //access the pubsub prefix
-        ps_pubsub_header_t* prefix = (ps_pubsub_header_t*)(q_message);
+        void *q_message = brokerQueue->get_next_message(-1, &len);
 
-        if ((prefix->packet_type & 0x80) == 0)
+        //access the pubsub prefix
+        ps_pubsub_header_t* prefix = static_cast<ps_pubsub_header_t*>(q_message);
+        
+        if (prefix->packet_type > PACKET_TYPES_COUNT)
         {
-            //pass it on
-            publish_user_message( q_message, len);
+            PS_ERROR("pub: packet_type %i!", prefix->packet_type);
         }
         else
         {
-            int packet_type = (prefix->packet_type & 0x7f);
+//            PS_DEBUG("pub: %s", packet_type_names[prefix->packet_type]);
             
-        if (packet_type < PACKET_TYPES_COUNT)
-        {
-            PS_DEBUG("pub: %s", packet_type_names[packet_type]);
-        }
-        else {
-            PS_ERROR("pub: packet_type %i!", packet_type);
-        }
-        
-        switch(prefix->packet_type)
-        {
-            case SEND_SUBS_PACKET:
-                
-                //it's a call for subscribed topics
-                send_subscriptions(prefix->packet_source);
-                break;
-            case SUBSCRIBE_PACKET:
+            switch(prefix->packet_type)
             {
-                ps_subscribe_message_t *msg = (ps_subscribe_message_t*) ((uint8_t*) q_message + sizeof(ps_pubsub_header_t));
-                int i = 0;
-                //process subscribe
-                while (msg->topicIds[i] && i < PS_MAX_TOPIC_LIST) {
-                    //subscribe to each topic listed
-                    subscribe(msg->topicIds[i], prefix->packet_source);
-                    i++;
-                };
+                case PUBLISH_PACKET:
+                    forward_topic_message(q_message, len);
+                    break;
+                    
+                    //packet for other plumbing function
+                default:
+                    forward_system_packet(q_message, len);
+                    break;
             }
-                break;
-            case TRANSPORT_ADDED_PACKET:
-                request_subscriptions(prefix->packet_source);
-                send_subscriptions(prefix->packet_source);
-                break;
-            case TRANSPORT_REMOVED_PACKET:
-                break;
-            case TRANSPORT_ONLINE_PACKET:
-                break;
-            case TRANSPORT_OFFLINE_PACKET:
-                break;
-            default:
-            	publish_system_message(q_message, len);
-                break;
-        }
         }
     }
+    
 }
 
 //called by broker thread to send a message to all subscribers
-void ps_pubsub_class::publish_user_message(const void *msg, int len)
+//user topics
+void ps_pubsub_class::forward_topic_message(const void *msg, int len)
 {
 	//access the pubsub prefix
-	ps_pubsub_header_t* prefix = (ps_pubsub_header_t*)(msg);
+	const ps_pubsub_header_t* prefix = static_cast<const ps_pubsub_header_t*>(msg);
 
-	PS_DEBUG("pub: publish_message to topic %i", prefix->packet_type);
+//	PS_DEBUG("pub: publish_message to topic %i", prefix->packet_type);
 
 	//user message to be published
     void *message = (void*) ((uint8_t*) msg + sizeof(ps_pubsub_header_t));
     int length = len - sizeof(ps_pubsub_header_t);
     
+    LOCK_MUTEX(pubsubMtx);
+    
 	//iterate client list
-	for (const auto& client : clientList)
+	for (psClient_t *client : clientList)
 	{
 		//find the subscribed topic
-		auto tId = client.topicList.find(prefix->packet_type);
-		if (tId != client.topicList.end())
+		auto tId = client->topicList.find(prefix->topic_id);
+		if (tId != client->topicList.end())
 		{
 			//this client is subscribed
-			if (client.messageHandler != nullptr)
-			{
-				PS_DEBUG("pub: sending to message handler");
-				//pointer to messageHandler C function
-				(*client.messageHandler)(message, length);
-			}
-			else if (client.transport_tag != prefix->packet_source)
-			{
-				//pointer to ps_transport subclass
-				auto pos = transports.find(client.transport_tag);
-				if (pos != transports.end())
-				{
-					PS_DEBUG("pub: sending to transport %s", pos->second->name.c_str());
-					pos->second->send_packet2(prefix, sizeof(ps_pubsub_header_t), message, length);
-				}
-			}
-			break;
+            PS_DEBUG("pub: sending topic %i to message handler", prefix->topic_id);
+            //pointer to messageHandler C function
+            (client->messageHandler)(message, length);
 		}
 	}
-	return;
+    //iterate transports
+    for (auto trns : transports)
+    {
+        //find the subscribed topic
+        auto tId = trns->topicList.find(prefix->topic_id);
+        if (tId != trns->topicList.end())
+        {
+            //this transport is subscribed
+            PS_DEBUG("pub: sending topic %i to %s", prefix->topic_id, trns->name.c_str());
+            trns->send_packet(msg, len);
+        }
+    }
+	UNLOCK_MUTEX(pubsubMtx);
 }
 //called by broker thread to send a message to all subscribers
-void ps_pubsub_class::publish_system_message(const void *msg, int len)
+//these messages go to plumbing 
+void ps_pubsub_class::forward_system_packet(const void *msg, int len)
 {
 	//access the pubsub prefix
 	ps_pubsub_header_t* prefix = (ps_pubsub_header_t*)(msg);
-	ps_packet_type_t packet_type = (prefix->packet_type & 0x7f);
+	ps_packet_type_t packet_type = (prefix->packet_type);
 
-	PS_DEBUG("pub: publish_system_message(%s)", packet_type_names[packet_type]);
-
- 	switch(packet_type)
+	if (packet_type < PACKET_TYPES_COUNT)
 	{
-	case SUBSCRIBE_PACKET:
-	case SEND_SUBS_PACKET:
-		//only looking for transports
-		for (auto pos = transports.begin(); pos != transports.end(); pos++)
-		{
-			if ((pos->first == prefix->packet_source) || (prefix->packet_source == 0))
-			{
-				PS_DEBUG("pub: sending to transport");
-				pos->second->send_packet(msg, len);
-			}
-		}
-		break;
-	default:
-		//plumbing internal message
-		if (packet_type < PACKET_TYPES_COUNT)
-		{
-			void *message = (void*) ((uint8_t*) msg + sizeof(ps_pubsub_header_t));
-			int length = len - sizeof(ps_pubsub_header_t);
+//		PS_DEBUG("pub: publish_system_packet(%s)", packet_type_names[packet_type]);
 
-			ps_root_class *rcl = registered_objects[packet_type];
-			if (rcl) rcl->message_handler(prefix->packet_source, packet_type, message, length);
-		}
-		else
-		{
-			PS_ERROR("pub: unknown packet %i", packet_type);
-		}
-		break;
+		LOCK_MUTEX(pubsubMtx);
+
+        if (prefix->packet_source == SOURCE)
+        {
+            //local source - send to all transports
+            for (auto trns : transports)
+            {
+                PS_DEBUG("pub: sending %s to %s", packet_type_names[packet_type], trns->name.c_str());
+                trns->send_packet(msg, len);
+            }
+        }
+        else
+        {
+            //remote source - send to registered objects
+            void *message = (void*) ((uint8_t*) msg + sizeof(ps_pubsub_header_t));
+            int length = len - sizeof(ps_pubsub_header_t);
+            
+            std::set<ps_root_class *> rcl_set = registered_objects[packet_type];
+            
+            for (ps_root_class *rcl : rcl_set)
+            {
+                PS_DEBUG("pub: sending %s to %s", packet_type_names[packet_type], rcl->name.c_str());
+                rcl->message_handler(prefix->packet_source, packet_type, message, length);
+            }
+        }
+		UNLOCK_MUTEX(pubsubMtx);
+	}
+	else
+	{
+		PS_ERROR("pub: packet_type %i!", packet_type);
 	}
 }
 
 //request all subscriptions from remote broker
-void ps_pubsub_class::request_subscriptions(ps_packet_source_t tag)
+void ps_pubsub_class::request_subscriptions(ps_transport_class *pst)
 {
-    PS_DEBUG("pub: request_subscriptions()");
+    PS_DEBUG("pub: request_subs from %s", pst->name.c_str());
     ps_pubsub_header_t prefix;
     prefix.packet_type = SEND_SUBS_PACKET;
-    prefix.packet_source = tag;
+    prefix.packet_source = SOURCE;                //actually, now a destination to identify the transport
     
-    publish_system_message(&prefix, sizeof(ps_pubsub_header_t));
+    pst->send_packet(static_cast<const void*>(&prefix), (int) sizeof(ps_pubsub_header_t));
 }
 
 //send all subscriptions to remote broker
-void ps_pubsub_class::send_subscriptions(ps_packet_source_t tag)
+void ps_pubsub_class::send_subscriptions(ps_transport_class *pst)
 {
-    PS_DEBUG("pub: send_subscriptions()");
-
+    PS_DEBUG("pub: send_subs to %s", pst->name.c_str());
+    
     struct {
-    ps_pubsub_header_t prefix;
-    ps_subscribe_message_t msg;
+        ps_pubsub_header_t prefix;
+        ps_subscribe_message_t msg;
     } sub_msg;
     
     sub_msg.prefix.packet_type = SUBSCRIBE_PACKET;
-    sub_msg.prefix.packet_source = tag;
+    sub_msg.prefix.packet_source = SOURCE;
     
     //publish topic list for this node
     
     //iterate callout list, collect topics
     std::set<ps_topic_id_t> topicSet;
     
-    for (const auto& client : clientList)
+    LOCK_MUTEX(pubsubMtx);
+    
+    for (psClient_t *client : clientList)
     {
-        for (const auto& tId : client.topicList)
+        for (const auto& tId : client->topicList)
         {
             topicSet.insert(tId);		//NB no duplicates allowed in a set
         }
     }
+    
+    //TODO? Add topics from other transports?
+    
+    UNLOCK_MUTEX(pubsubMtx);
     
     //send subs list message(s)
     
     int i = 0;
     for (const auto& tId : topicSet)
     {
-    	sub_msg.msg.topicIds[i++] = tId;
+        sub_msg.msg.topicIds[i++] = tId;
         
         if (i >= PS_MAX_TOPIC_LIST)	//this message is full
         {
-        	publish_system_message(&sub_msg, sizeof(sub_msg));
+            pst->send_packet(static_cast<const void*>(&sub_msg), (int) sizeof(sub_msg));
             i = 0;
         }
     }
     if (i)
     {
         //last message incomplete, more to send
-    	sub_msg.msg.topicIds[i] = 0;
-        publish_system_message(&sub_msg, sizeof(sub_msg));
+        sub_msg.msg.topicIds[i] = 0;
+        pst->send_packet(static_cast<const void*>(&sub_msg), (int) sizeof(sub_msg));
     }
 }
 
@@ -260,29 +238,34 @@ ps_result_enum ps_publish(ps_topic_id_t topic_id, const void *message, int lengt
 
 int get_max_ps_packet()
 {
-	return max_ps_packet;
+	return the_broker().max_ps_packet;
 }
 
 //register for system packets
 ps_result_enum ps_pubsub_class::register_object(ps_packet_type_t packet_type, ps_root_class *rcl)
 {
-    PS_DEBUG("pub: register_object(%s, %s)", packet_type_names[packet_type], rcl->name.c_str());
+    int type = packet_type;
+    
+    LOCK_MUTEX(pubsubMtx);
+    PS_DEBUG("pub: register_object(%s, %s)", packet_type_names[type], rcl->name.c_str());
 
-    if (packet_type < PACKET_TYPES_COUNT)
+    if (type < PACKET_TYPES_COUNT)
     {
-        registered_objects[packet_type] = rcl;
+        registered_objects[type].insert(rcl);
     }
+    UNLOCK_MUTEX(pubsubMtx);
     return PS_OK;
 }
 
-//clled by other plumbing objects to send a system packet
-ps_result_enum ps_pubsub_class::publish_system_packet(ps_packet_type_t packet_type, const void *message, int length)
+//called by other plumbing objects to send a system packet
+ps_result_enum ps_pubsub_class::publish_packet(ps_packet_type_t packet_type, const void *message, int length)
 {
+    
     ps_pubsub_header_t prefix;
-    prefix.packet_type   = packet_type | 0x80;  //top bit must be 1
+    prefix.packet_type   = packet_type;  //top bit must be 1
     prefix.packet_source = SOURCE;
     
-    PS_DEBUG("pub: publish_system_packet(%s)", packet_type_names[packet_type]);
+    PS_DEBUG("pub: publish_packet(%s)", packet_type_names[(packet_type)]);
     
     if (length <= (int) max_ps_packet)
     {
@@ -292,7 +275,7 @@ ps_result_enum ps_pubsub_class::publish_system_packet(ps_packet_type_t packet_ty
     }
     else
     {
-        PS_ERROR("pub: %s packet too big", packet_type_names[packet_type]);
+        PS_ERROR("pub: %s packet too big", packet_type_names[packet_type ]);
         return PS_LENGTH_ERROR;
     }
     
@@ -303,107 +286,120 @@ ps_result_enum ps_pubsub_class::publish_system_packet(ps_packet_type_t packet_ty
 //////////////////////////transport api
 
 //suscribe to topic Id. Transport version.
-ps_result_enum ps_pubsub_class::subscribe(ps_topic_id_t topicId, ps_packet_source_t tag)
+ps_result_enum ps_pubsub_class::subscribe(ps_topic_id_t topicId, ps_transport_class *pst)
 {
-    PS_DEBUG("pub: subscribe to %i from tag %i", topicId, tag);
-    //find the client
-    for (auto& client : clientList)
-    {
-        if (client.transport_tag == tag)
-        {
-            //insert the topic
-            std::set<ps_topic_id_t> *topics = &client.topicList;
-            topics->insert(topicId);	//add new subscription
-            return PS_OK;
-        }
-    }
-    //add new client
-    {
-        psClient_t newClient;
-        newClient.transport_tag = tag;
-        newClient.messageHandler = nullptr;
-        std::set<ps_topic_id_t> topics = newClient.topicList;
-        topics.insert(topicId);	//add new subscription
-        
-        clientList.push_back(newClient);
-    }
-    return PS_OK;
-}
-//remove transport from client list
-ps_result_enum ps_pubsub_class::unsubscribe_all(ps_packet_source_t tag)
-{
-    //find the client
-    for (auto pos = clientList.begin(); pos != clientList.end(); pos++)
-    {
-        if (pos->transport_tag == tag)
-        {
-            clientList.erase(pos);
-            return PS_OK;
-        }
-    }
-    return PS_OK;
-}
-
-//transport callbacks
-
-void ps_pubsub_class::process_observed_data(ps_transport_class *pst, const void *message, int len)
-{
-    PS_DEBUG("pub: data from %s", pst->name.c_str());
-    //incoming from Transport
-    ps_pubsub_header_t& prefix = (ps_pubsub_header_t&)(message);
-    prefix.packet_source = pst->tag;
+    PS_DEBUG("pub: subscribe to %i from %s", topicId, pst->name.c_str());
     
-    //queue it for the broker thread
-    brokerQueue->copy_message_to_q(message, len);
+    LOCK_MUTEX(pubsubMtx);
+    
+    //insert the topic
+    pst->topicList.insert(topicId);	//add new subscription
+
+    UNLOCK_MUTEX(pubsubMtx);
+    return PS_OK;
 }
 
-void ps_pubsub_class::process_observed_event(ps_transport_class *pst, ps_transport_event_enum ev)
+//transport callbacks, data and events
+
+void ps_pubsub_class::process_observed_data(ps_root_class *_pst, const void *message, int len)
 {
+    ps_transport_class *pst = dynamic_cast<ps_transport_class *>(_pst);
+    
+    //incoming from Transport
+    const ps_pubsub_header_t *prefix = static_cast<const ps_pubsub_header_t*>(message);
+    
+    pst->transport_source = static_cast<Source_t>(prefix->packet_source);
+    
+    if (prefix->packet_type < PACKET_TYPES_COUNT)
+    {
+        if (prefix->packet_type == PUBLISH_PACKET)
+        {
+            PS_DEBUG("pub: rx topic %i from %s", prefix->topic_id, pst->name.c_str());
+        }
+        else
+        {
+            PS_DEBUG("pub: rx %s from %s",packet_type_names[prefix->packet_type], pst->name.c_str());
+        }
+        
+        switch(prefix->packet_type)
+        {
+            case SEND_SUBS_PACKET:
+                send_subscriptions(pst);
+                break;
+            case SUBSCRIBE_PACKET:
+                //its a list of topics needed
+            {
+                ps_subscribe_message_t *msg = (ps_subscribe_message_t*) ((uint8_t*) message + sizeof(ps_pubsub_header_t));
+                int i = 0;
+                //process subscribe
+                while (msg->topicIds[i] && i < PS_MAX_TOPIC_LIST) {
+                    //subscribe to each topic listed
+                    subscribe(msg->topicIds[i], pst);
+                    i++;
+                };
+            }
+                break;
+                
+            default:
+                //queue it for the broker thread
+                brokerQueue->copy_message_to_q(message, len);
+                break;
+        }
+    }
+    else
+    {
+        PS_DEBUG("pub: rx bad pkt %i from %s", prefix->packet_type, pst->name.c_str());
+        //discard
+    }
+}
+
+void ps_pubsub_class::process_observed_event(ps_root_class *_pst, int _ev)
+{
+    ps_transport_class *pst = dynamic_cast<ps_transport_class *>(_pst);
+    ps_transport_event_enum ev = (ps_transport_event_enum) _ev;
+    
     PS_DEBUG("pub: status %s from %s", transport_event_names[ev], pst->name.c_str());
     
-    ps_pubsub_header_t prefix;
-    prefix.packet_source = pst->tag;
+    bool send_subs {false};
+    
+    LOCK_MUTEX(pubsubMtx);
     
     switch(ev)
     {
         case PS_TRANSPORT_ONLINE:
-            prefix.packet_type = TRANSPORT_ONLINE_PACKET;
+            send_subs = true;
             break;
         case PS_TRANSPORT_OFFLINE:
-            prefix.packet_type = TRANSPORT_OFFLINE_PACKET;
             break;
         case PS_TRANSPORT_ADDED:
         {
-            prefix.packet_type = TRANSPORT_ADDED_PACKET;
-            ps_packet_source_t tag = the_broker().next_source_tag++;
+            transports.insert(pst);
             
-            the_broker().transports.insert(std::make_pair(tag, pst));
-            
-            prefix.packet_source = tag;
-            pst->tag = tag;
             pst->add_data_observer(this);
-            pst->add_event_observer(this);
+            send_subs = true;
         }
             break;
         case PS_TRANSPORT_REMOVED:
         {
-            prefix.packet_type = TRANSPORT_REMOVED_PACKET;
-            
-            //remove transports entry
-            auto pos = the_broker().transports.find(pst->tag);
-            if (pos != the_broker().transports.end())
+             //remove transports entry
+            auto pos = transports.find(pst);
+            if (pos != transports.end())
             {
-                the_broker().transports.erase(pos);
+                transports.erase(pos);
             }
         }
             break;
         default:
-            return;
             break;
     }
     
-    //queue it for the broker thread
-    brokerQueue->copy_message_to_q(&prefix, sizeof(ps_pubsub_header_t));
+    UNLOCK_MUTEX(pubsubMtx);
+    
+    if (send_subs)
+    {
+        request_subscriptions(pst);
+        send_subscriptions(pst);
+    }
 }
 
 ////////////////////////////public api
@@ -411,44 +407,45 @@ void ps_pubsub_class::process_observed_event(ps_transport_class *pst, ps_transpo
 //suscribe to topic Id. Receive a callback when a message is received
 ps_result_enum ps_pubsub_class::subscribe(ps_topic_id_t topicId, message_handler_t *msgHandler)
 {
+    LOCK_MUTEX(pubsubMtx);
+    
     //find the client
-    for (auto& client : clientList)
+    for (psClient_t *client : clientList)
     {
-        if (client.messageHandler == msgHandler)
+        if (client->messageHandler == msgHandler)
         {
-            std::set<ps_topic_id_t> *topics = &client.topicList;
-            topics->insert(topicId);	//add new subscription
+            client->topicList.insert(topicId);	//add new subscription
             
             PS_DEBUG("pub: subscribed to topic %i", topicId);
+            UNLOCK_MUTEX(pubsubMtx);
             return PS_OK;
         }
     }
     //add new client
     {
-        psClient_t newClient;
-        newClient.messageHandler 	= msgHandler;
-        newClient.transport_tag 	= 0;
-        std::set<ps_topic_id_t> topics = newClient.topicList;
-        topics.insert(topicId);	//add new subscription
+        psClient_t *newClient = new psClient_t();
+        newClient->messageHandler 	= msgHandler;
+        newClient->topicList.insert(topicId);	//add new subscription
         
-        clientList.push_back(newClient);
+        clientList.insert(newClient);
         
         PS_DEBUG("pub: new client subscribed to topic %i", topicId);
     }
+    UNLOCK_MUTEX(pubsubMtx);
     return PS_OK;
 }
 
-//publish a message to a topic id
+//publish a user message to a topic
 ps_result_enum ps_pubsub_class::publish(ps_topic_id_t topicId, const void *message, int length)
 {
     ps_pubsub_header_t prefix;
-    prefix.packet_type   = topicId & 0x7f;  //top bit must be 0
+    prefix.packet_type   = PUBLISH_PACKET;
+    prefix.topic_id   = topicId;
     prefix.packet_source = SOURCE;
-    
-    PS_DEBUG("pub: publish to topic %i", topicId);
     
     if (length <= (int) max_ps_packet)
     {
+        PS_DEBUG("pub: publish to topic %i", topicId);
         //queue for broker thread
         brokerQueue->copy_2message_parts_to_q( &prefix, sizeof(ps_pubsub_header_t), message, length);
         return PS_OK;

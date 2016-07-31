@@ -24,6 +24,7 @@ protected:
     ps_pubsub_linux();
     ~ps_pubsub_linux();
     
+    void linux_broker_thread_method();
 public:
 
     friend ps_pubsub_class& the_broker();

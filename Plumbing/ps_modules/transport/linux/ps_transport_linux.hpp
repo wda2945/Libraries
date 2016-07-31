@@ -25,12 +25,13 @@ public:
     ~ps_transport_linux();
     
     //send packet - called by broker
-    void send_packet(const void *packet, int length);
-    void send_packet2(const void *packet1, int len1, const void *packet2, int len2);
+    void send_packet(const void *packet, int length) override;
+    void send_packet2(const void *packet1, int len1, const void *packet2, int len2) override;
 
 protected:
 
     thread              *send_thread;
+    
     mutex               protocolMtx;	//access control to protocol data
     condition_variable  protocolCond;	//signals reply packet received
 
@@ -39,8 +40,8 @@ protected:
     void transport_linux_send_thread_method();
 
     //////////// Packet -> Transport callback methods
-    virtual void process_observed_data(const void *_pkt, int len);    //incoming data from packet layer
-    virtual void process_observed_event(ps_packet_event_t stat);
+    virtual void process_observed_data(ps_root_class *src, const void *_pkt, int len) override;    //incoming data from packet
+    virtual void process_observed_event(ps_root_class *src, int stat) override;
 };
 
 #endif /* ps_transport_linux_hpp */

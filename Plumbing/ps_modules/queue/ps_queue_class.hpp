@@ -24,7 +24,10 @@ public:
     virtual void copy_3message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2, const void *msg3, int len3) = 0;
 
     //get next message
-    //waits if empty, returns pointer (call done_with_message!)
+    //returns pointer (call done_with_message!)
+    //msecs < 0 waits for ever
+    //msecs == 0 does not wait
+    //msecs > 0 waits x millisecs
     virtual void *get_next_message(int msecs, int *length) = 0;
     
     virtual void done_with_message(void *msg) = 0;	//when done with message Q entry -> freelist

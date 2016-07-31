@@ -19,8 +19,4 @@ typedef enum : ps_packet_type_t {
 } ps_packet_type_enum;
 #undef packet_macro
 
-//#define packet_macro(e, name, qos) const ps_packet_type_t  e = e##_ENUM;
-//#include "ps_packet_macros.h"
-//#undef packet_macro
-
 #endif /* ps_common_constants_h */

@@ -26,18 +26,18 @@ public:
     ~ps_queue_linux();
     
     //append to queue
-    void copy_message_to_q(const void *msg, int len);
-    void copy_2message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2);
-    void copy_3message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2, const void *msg3, int len3);
+    void copy_message_to_q(const void *msg, int len) override;
+    void copy_2message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2) override;
+    void copy_3message_parts_to_q(const void *msg1, int len1, const void *msg2, int len2, const void *msg3, int len3) override;
     
     //get next message
-    void *get_next_message(int msecs, int *length);	//waits msecs if empty, returns pointer
+    void *get_next_message(int msecs, int *length) override;	//waits msecs if empty, returns pointer
     
-    void done_with_message(void *msg);	//when done with message Q entry -> freelist
+    void done_with_message(void *msg) override;	//when done with message Q entry -> freelist
     
     //queue info
-    bool empty();
-    int count();
+    bool empty() override;
+    int count() override;
     
 private:
     //queue entry total size

@@ -23,14 +23,14 @@ public:
     //add to transports vector
     void add_transport_to_network(ps_transport_class *pst);
     
-    //list the transports
+    //list the transports - calls process_observed_event()
     void iterate_transports(ps_root_class *cb);
 
     //lookup transport
     ps_transport_class *get_transport_by_name(const char *name);
     
     //callback method for transport -> network events
-    void process_observed_event(ps_transport_class *pst, ps_transport_event_enum ev);
+    void process_observed_event(ps_root_class *src, int event) override;
 
 protected:
     ps_network();
@@ -39,6 +39,12 @@ protected:
     std::vector<ps_transport_class*> transports;
 
     friend ps_network& the_network();
+    
+    DEFINE_MUTEX(networkMtx);
+public:
+    //observer callback not used
+    void process_observed_data(ps_root_class *src, const void *msg, int length) override {}
+
 };
 
 ps_network& the_network();

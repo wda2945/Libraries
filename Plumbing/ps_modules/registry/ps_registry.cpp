@@ -19,7 +19,7 @@ ps_registry& the_registry()
 	return the_registry;
 }
 
-ps_registry::ps_registry()
+ps_registry::ps_registry() : ps_root_class(std::string("registry"))
 {
     the_broker().register_object(REGISTRY_UPDATE_PACKET, this);
     the_broker().register_object(REGISTRY_SYNC_PACKET, this);
@@ -43,9 +43,13 @@ std::string get_name_string(const char *_name)
 
 ps_registry_datatype_t ps_registry::get_registry_type(const char *domain, const char *name)
 {
+//    PS_DEBUG("reg: get type %s/%s", domain, name);
+	LOCK_MUTEX(registryMtx);
+
     auto domain_pos = registry.find(get_domain_string(domain));   //find the domain set<>
     if (domain_pos == registry.end())
     {
+    	UNLOCK_MUTEX(registryMtx);
         return PS_REGISTRY_UNKNOWN_TYPE;        //unknown domain
     }
 
@@ -54,18 +58,27 @@ ps_registry_datatype_t ps_registry::get_registry_type(const char *domain, const 
     auto pos = domain_set->find(get_name_string(name));          //find the name object (ps_registry_entry_class)
     if (pos == domain_set->end())
     {
+    	UNLOCK_MUTEX(registryMtx);
         return PS_REGISTRY_UNKNOWN_TYPE;        //unknown name
     }
 
-    return pos->second.entry.value.datatype;
+    ps_registry_datatype_t type = pos->second.entry.value.datatype;
+    
+	UNLOCK_MUTEX(registryMtx);
+    
+    return type;
 }
 
-ps_registry_flags_t    ps_registry::get_registry_flags(const char *domain, const char *name)
+ps_registry_flags_t ps_registry::get_registry_flags(const char *domain, const char *name)
 {
-    auto domain_pos = registry.find(get_domain_string(domain));   //find the domain set<>
+//    PS_DEBUG("reg: get flags %s/%s", domain, name);
+	LOCK_MUTEX(registryMtx);
+
+	auto domain_pos = registry.find(get_domain_string(domain));   //find the domain set<>
     if (domain_pos == registry.end())
     {
-        return PS_REGISTRY_UNKNOWN_TYPE;        //unknown domain
+    	UNLOCK_MUTEX(registryMtx);
+        return PS_REGISTRY_INVALID_FLAGS;        //unknown domain
     }
     
     domain_set_t *domain_set = domain_pos->second;
@@ -73,20 +86,30 @@ ps_registry_flags_t    ps_registry::get_registry_flags(const char *domain, const
     auto pos = domain_set->find(get_name_string(name));          //find the name object (ps_registry_entry_class)
     if (pos == domain_set->end())
     {
-        return PS_REGISTRY_UNKNOWN_TYPE;        //unknown name
+    	UNLOCK_MUTEX(registryMtx);
+    	return PS_REGISTRY_INVALID_FLAGS;        //unknown name
     }
     
-    return pos->second.entry.value.flags;
+    ps_registry_flags_t flags = pos->second.entry.value.flags;
+
+	UNLOCK_MUTEX(registryMtx);
+
+	return flags;
 }
 
 //add a new entry into the registry
 ps_result_enum ps_registry::add_new_registry_entry(const char *_domain, const char *_name,
                                                ps_registry_datatype_t type, ps_registry_flags_t flags)
 {
+//    PS_DEBUG("reg: new %s/%s", _domain, _name);
+	ps_registry_entry_t new_entry;
+
     domain_set_t *domain_set;
-    std::string domain = get_domain_string(_domain);
+    std::string domain  = get_domain_string(_domain);
     std::string name    = get_name_string(_name);
     
+	LOCK_MUTEX(registryMtx);
+
 	auto domain_pos = registry.find(domain);   //get the domain set
     if (domain_pos == registry.end())
     {
@@ -102,8 +125,6 @@ ps_result_enum ps_registry::add_new_registry_entry(const char *_domain, const ch
     auto pos = domain_set->find(name);   //get the name set
 	if (pos == domain_set->end())
 	{
-        ps_registry_entry_t new_entry;
-
         strncpy(new_entry.entry.domain, _domain, REGISTRY_DOMAIN_LENGTH);
         new_entry.entry.domain[REGISTRY_DOMAIN_LENGTH-1] = '\0';
 
@@ -139,23 +160,33 @@ ps_result_enum ps_registry::add_new_registry_entry(const char *_domain, const ch
         }
 
 		domain_set->insert(std::make_pair(name, new_entry));
-    
-        notify_observers(_domain, "any");
+
+        UNLOCK_MUTEX(registryMtx);
+
+        notify_domain_observers(_domain, _name);
+        
+        the_broker().publish_packet(REGISTRY_UPDATE_PACKET, &new_entry.entry, sizeof(ps_update_packet_t));
+
+        return PS_OK;
 	}
 	else
 	{
+    	UNLOCK_MUTEX(registryMtx);
 		return PS_NAME_EXISTS;
 	}
-	return PS_OK;
 }
 
 ps_result_enum ps_registry::set_new_registry_entry(const char *_domain, const char *_name, const ps_registry_struct_t& set_value)
 {
+//    PS_DEBUG("reg: new %s/%s", _domain, _name);
+	ps_registry_entry_t new_entry;
     domain_set_t *domain_set;
     std::string domain = get_domain_string(_domain);
     std::string name    = get_name_string(_name);
     
-    auto domain_pos = registry.find(domain);   //get the domain set
+	LOCK_MUTEX(registryMtx);
+
+	auto domain_pos = registry.find(domain);   //get the domain set
     if (domain_pos == registry.end())
     {
         //new domain
@@ -170,8 +201,6 @@ ps_result_enum ps_registry::set_new_registry_entry(const char *_domain, const ch
     auto pos = domain_set->find(name);   //get the name set
     if (pos == domain_set->end())
     {
-        ps_registry_entry_t new_entry;
-        
         strncpy(new_entry.entry.domain, _domain, REGISTRY_DOMAIN_LENGTH);
         new_entry.entry.domain[REGISTRY_DOMAIN_LENGTH-1] = '\0';
         
@@ -208,25 +237,38 @@ ps_result_enum ps_registry::set_new_registry_entry(const char *_domain, const ch
         
         domain_set->insert(std::make_pair(name, new_entry));
         
-        notify_observers(_domain, "any");
+        UNLOCK_MUTEX(registryMtx);
+
+        notify_domain_observers(_domain, _name);
+
+        the_broker().publish_packet(REGISTRY_UPDATE_PACKET, &new_entry.entry, sizeof(ps_update_packet_t));
+
+        return PS_OK;
     }
     else
     {
+    	UNLOCK_MUTEX(registryMtx);
         return PS_NAME_EXISTS;
     }
-    return PS_OK;
 }
 
 //copy value only into the registry
 ps_result_enum ps_registry::set_registry_entry(const char *_domain, const char *_name, const ps_registry_struct_t &new_value)
 {
+//    PS_DEBUG("reg: set %s/%s", _domain, _name);
+	ps_update_packet_t 			*update_pkt;
+	std::set<ps_observer_class*> _observers;
+
     domain_set_t *domain_set;
     std::string domain = get_domain_string(_domain);
     std::string name    = get_name_string(_name);
     
+	LOCK_MUTEX(registryMtx);
+
     auto domain_pos = registry.find(domain);   //get the domain set
     if (domain_pos == registry.end())
     {
+    	UNLOCK_MUTEX(registryMtx);
         return PS_NAME_NOT_FOUND;
     }
     else
@@ -237,6 +279,7 @@ ps_result_enum ps_registry::set_registry_entry(const char *_domain, const char *
     auto pos = domain_set->find(name);
 	if (pos == domain_set->end())
 	{
+    	UNLOCK_MUTEX(registryMtx);
 		return PS_NAME_NOT_FOUND;
 	}
 	else
@@ -246,23 +289,39 @@ ps_result_enum ps_registry::set_registry_entry(const char *_domain, const char *
         pos->second.entry.value.serial++;
         this_checksum++;
         
-        notify_observers(_domain, _name);
+        _observers = pos->second.observers;
+        update_pkt = &pos->second.entry;
+
+        UNLOCK_MUTEX(registryMtx);
+
+        //notify observers
+        for (auto obs : _observers)
+        {
+            (obs->observer_callback)(domain.c_str(), name.c_str(), obs->arg);
+        }
+
+        notify_domain_observers(_domain, _name);
         
+        the_broker().publish_packet(REGISTRY_UPDATE_PACKET, update_pkt, sizeof(ps_update_packet_t));
+
         return reply;
 	}
-	return PS_OK;
 }
 
 //copy entry from the registry
 ps_result_enum ps_registry::get_registry_entry(const char *_domain, const char *_name, ps_registry_struct_t *get_value)
 {
+    PS_DEBUG("reg: get %s/%s", _domain, _name);
     domain_set_t *domain_set;
     std::string domain = get_domain_string(_domain);
     std::string name    = get_name_string(_name);
     
-    auto domain_pos = registry.find(domain);   //get the domain set
+	LOCK_MUTEX(registryMtx);
+
+	auto domain_pos = registry.find(domain);   //get the domain set
     if (domain_pos == registry.end())
     {
+    	UNLOCK_MUTEX(registryMtx);
         return PS_NAME_NOT_FOUND;
     }
     else
@@ -273,6 +332,7 @@ ps_result_enum ps_registry::get_registry_entry(const char *_domain, const char *
     auto pos = domain_set->find(name);
     if (pos == domain_set->end())
     {
+    	UNLOCK_MUTEX(registryMtx);
         return PS_NAME_NOT_FOUND;
     }
     else
@@ -280,16 +340,20 @@ ps_result_enum ps_registry::get_registry_entry(const char *_domain, const char *
         //copy min, max, value
 		copy_all_data(*get_value, pos->second.entry.value);
 	}
+	UNLOCK_MUTEX(registryMtx);
 	return PS_OK;
 }
 
 ps_result_enum ps_registry::set_observer(const char *_domain, const char *_name, ps_registry_callback_t *callback, const void *arg)
 {
+    PS_DEBUG("reg: set_observer: %s/%s", _domain, _name);
     domain_set_t *domain_set;
     std::string domain = get_domain_string(_domain);
     std::string name    = get_name_string(_name);
     
-    auto domain_pos = registry.find(domain);   //get the domain set
+	LOCK_MUTEX(registryMtx);
+
+	auto domain_pos = registry.find(domain);   //get the domain set
     if (domain_pos == registry.end())
     {
         //make an entry for domain
@@ -306,6 +370,8 @@ ps_result_enum ps_registry::set_observer(const char *_domain, const char *_name,
     {
         ps_observer_class *obs = new ps_observer_class(callback, arg);
         pos->second.observers.insert(obs);
+        UNLOCK_MUTEX(registryMtx);
+        return PS_OK;
     }
     else if (name == "any")
     {
@@ -327,47 +393,45 @@ ps_result_enum ps_registry::set_observer(const char *_domain, const char *_name,
         
         pos = domain_set->find(name);
         pos->second.observers.insert(obs);
+        
+        UNLOCK_MUTEX(registryMtx);
+        return PS_OK;
     }
     else
     {
         PS_DEBUG("reg: set_observer: %s/%s not found", domain.c_str(), name.c_str());
+    	UNLOCK_MUTEX(registryMtx);
         return PS_NAME_NOT_FOUND;
     }
-   
-    PS_DEBUG("reg: set_observer: %s/%s", domain.c_str(), name.c_str());
-	return PS_OK;
 }
 
-void ps_registry::notify_observers(const char *_domain, const char *_name)
+void ps_registry::notify_domain_observers(const char *_domain, const char *_name)
 {
     domain_set_t *domain_set;
+    std::set<ps_observer_class*> _observers;
+    
     std::string domain = get_domain_string(_domain);
     std::string name    = get_name_string(_name);
-    
-    auto domain_pos = registry.find(domain);   //get the domain set
-    if (domain_pos == registry.end())
+	LOCK_MUTEX(registryMtx);
+
+	auto domain_pos = registry.find(domain);   //get the domain set
+    if (domain_pos != registry.end())
     {
         domain_set = domain_pos->second;
         
-        auto pos = domain_set->find(name);
+        auto pos = domain_set->find("any");
         if (pos != domain_set->end())
         {
-            //notify observers
-            for (auto obs : pos->second.observers)
-            {
-                (obs->observer_callback)(domain.c_str(), name.c_str(), obs->arg);
-            }
+            _observers = pos->second.observers;
         }
-        //notify domain observers
-        auto dpos = domain_set->find(std::string("any"));
-        
-        if (dpos != domain_set->end())
-        {
-            for (auto obs : dpos->second.observers)
-            {
-                (obs->observer_callback)(domain.c_str(), name.c_str(), obs->arg);
-            }
-        }
+    }
+    
+    UNLOCK_MUTEX(registryMtx);
+    
+    //notify observers
+    for (auto obs : _observers)
+    {
+        (obs->observer_callback)(domain.c_str(), name.c_str(), obs->arg);
     }
 }
 
@@ -378,15 +442,20 @@ ps_result_enum ps_registry::interate_domain(const char *_domain, ps_registry_cal
     domain_set_t *domain_set;
     std::string domain = get_domain_string(_domain);
     
-    auto domain_pos = registry.find(domain);   //get the domain set
+	LOCK_MUTEX(registryMtx);
+
+	auto domain_pos = registry.find(domain);   //get the domain set
     if (domain_pos == registry.end())
     {
+    	UNLOCK_MUTEX(registryMtx);
         return PS_NAME_NOT_FOUND;
     }
     else
     {
         domain_set = domain_pos->second;
     }
+    UNLOCK_MUTEX(registryMtx);
+
     for (auto pos = domain_set->begin(); pos != domain_set->end(); pos++)
     {
         (callback)(domain.c_str(), pos->first.c_str(), arg);
@@ -396,8 +465,165 @@ ps_result_enum ps_registry::interate_domain(const char *_domain, ps_registry_cal
 
 ps_result_enum ps_registry::reset_registry()
 {
-    registry.clear();
+	LOCK_MUTEX(registryMtx);
+
+	registry.clear();
+
+	UNLOCK_MUTEX(registryMtx);
     return PS_OK;
+}
+
+
+void ps_registry::calculate_checksum()
+{
+    int i;
+    for (i=0; i< SRC_COUNT; i++)
+    {
+        checksums[i] = 0;
+    }
+
+	LOCK_MUTEX(registryMtx);
+
+	for (auto domain_pos : registry)
+    {
+        for (auto name_pos : *domain_pos.second)
+        {
+            int src    = name_pos.second.entry.value.source;
+            uint8_t flags  = name_pos.second.entry.value.flags;
+
+            if ((src < SRC_COUNT) && ((flags & PS_REGISTRY_LOCAL) == 0))
+            {
+                checksums[src] += name_pos.second.entry.value.serial;
+            }
+        }
+    }
+
+    this_checksum = checksums[SOURCE];
+
+	UNLOCK_MUTEX(registryMtx);
+}
+
+//send a sync packet containing the checksums of registry entries from each source
+ps_result_enum ps_registry::send_registry_sync()
+{
+    calculate_checksum();
+    return the_broker().publish_packet(REGISTRY_SYNC_PACKET, checksums, sizeof(int) * SRC_COUNT);
+}
+
+//process received packets, either a sync packet or an update
+void ps_registry::message_handler(ps_packet_source_t packet_source, ps_packet_type_t   packet_type, const void *msg, int length)
+{
+    if (packet_source != SOURCE)
+    {
+        switch(packet_type)
+        {
+            case REGISTRY_SYNC_PACKET:
+                //receive registry sync packet
+            {
+                PS_DEBUG("reg: rx sync packet");
+                calculate_checksum();
+
+                const int *csums = static_cast<const int*>(msg);
+
+                if ((int)((SOURCE+1) * sizeof(int)) < length)
+                {
+                    if (csums[SOURCE] != checksums[SOURCE])
+                    {
+                        PS_DEBUG("reg: checksum %i from %i. Should be %i", csums[SOURCE], packet_source, checksums[SOURCE]);
+                        resend_all_updates();
+                    }
+                }
+                else
+                {
+                    PS_ERROR("reg: sync packet too short");
+                }
+            }
+                break;
+            case REGISTRY_UPDATE_PACKET:
+                //receive registry update
+                if (length >= (int) sizeof(ps_update_packet_t))
+                {
+                    ps_update_packet_t *pkt = (ps_update_packet_t*) msg;
+                    ps_registry_entry_t new_entry;
+                    
+                    PS_DEBUG("reg: rx update %s/%s", pkt->domain, pkt->name);
+
+                    std::set<ps_observer_class*> _observers;
+                    
+                    domain_set_t *domain_set;
+                    std::string domain {pkt->domain};
+                    std::string name   {pkt->name};
+                    
+                    LOCK_MUTEX(registryMtx);
+                    
+                    auto domain_pos = registry.find(domain);   //get the domain set
+                    if (domain_pos == registry.end())
+                    {
+                        //new domain
+                        domain_set = new domain_set_t();
+                        registry.insert(std::make_pair(domain, domain_set));
+                    }
+                    else
+                    {
+                        domain_set = domain_pos->second;
+                    }
+                    
+                    auto pos = domain_set->find(name);
+                    if (pos == domain_set->end())
+                    {
+                        //new name entry
+                        memcpy(&new_entry.entry, pkt, sizeof(ps_update_packet_t));
+                        domain_set->insert(std::make_pair(name, new_entry));
+                        pos = domain_set->find(name);
+                    }
+                    
+                    //copy value if type matches
+                    copy_data(pos->second.entry.value, pkt->value);
+                    pos->second.entry.value.serial = pkt->value.serial;
+                    
+                    _observers = pos->second.observers;
+                    
+                    UNLOCK_MUTEX(registryMtx);
+                    
+                    //notify observers
+                    for (auto obs : _observers)
+                    {
+                        (obs->observer_callback)(pkt->domain, pkt->name, obs->arg);
+                    }
+                    
+                    notify_domain_observers(pkt->domain, pkt->name);
+
+                }
+                else
+                {
+                    PS_DEBUG("reg: rx bad update packet");
+                }
+
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+//resend all the entries I own except local-only
+void ps_registry::resend_all_updates()
+{
+	LOCK_MUTEX(registryMtx);
+
+	for (auto domain_pos : registry)
+    {
+        for (auto name_pos : *domain_pos.second)
+        {
+            auto src    = name_pos.second.entry.value.source;
+            auto flags  = name_pos.second.entry.value.flags;
+            if ((src == SOURCE) && ((flags & PS_REGISTRY_LOCAL) == 0))
+            {
+                 the_broker().publish_packet(REGISTRY_UPDATE_PACKET, &name_pos.second.entry, sizeof(ps_update_packet_t));
+            }
+        }
+    }
+	UNLOCK_MUTEX(registryMtx);
 }
 
 ps_result_enum ps_registry::load_registry_method(const char *path)
@@ -411,7 +637,7 @@ ps_result_enum ps_registry::load_registry_method(const char *path)
     
     PS_DEBUG("reg: pre-loading from %s", path);
     
-    while (getline(&buff, &buffsize, fp) > 0)
+	while (getline(&buff, &buffsize, fp) > 0)
     {
         char value_type[20] {""};
         sscanf(buff, "%19s", value_type);
@@ -525,7 +751,9 @@ ps_result_enum ps_registry::save_registry_method(const char *path, const char *d
     if (fp == 0)
         return PS_NAME_NOT_FOUND;
     
-    for (auto domain_pos : registry)
+	LOCK_MUTEX(registryMtx);
+
+	for (auto domain_pos : registry)
     {
         if ((domain_pos.first == std::string(domain)) || (domain == NULL))
         {
@@ -591,93 +819,8 @@ ps_result_enum ps_registry::save_registry_method(const char *path, const char *d
     }
 
     fclose(fp);
+	UNLOCK_MUTEX(registryMtx);
     return PS_OK;
-}
-
-
-void ps_registry::calculate_checksum()
-{
-    int i;
-    for (i=0; i< SRC_COUNT; i++)
-    {
-        checksums[i] = 0;
-    }
-    
-    for (auto domain_pos : registry)
-    {
-        for (auto name_pos : *domain_pos.second)
-        {
-            auto src    = name_pos.second.entry.value.source;
-            auto flags  = name_pos.second.entry.value.flags;
-            if ((src < SRC_COUNT) && ((flags & PS_REGISTRY_LOCAL) == 0))
-            {
-                checksums[src]+= name_pos.second.entry.value.serial;
-            }
-        }
-    }
-}
-
-//send a sync packet containing the checksums of registry entries from each source
-ps_result_enum ps_registry::send_registry_sync()
-{
-    calculate_checksum();
-    return the_broker().publish_system_packet(REGISTRY_SYNC_PACKET, checksums, sizeof(int) * SRC_COUNT);
-}
-
-//process received packets, either a sync packet or an update
-void ps_registry::message_handler(ps_packet_source_t packet_source,
-                ps_packet_type_t   packet_type,
-                void *msg, int length)
-{
-    switch(packet_type)
-    {
-        case REGISTRY_SYNC_PACKET:
-            //receive registry sync packet
-        {
-            int **csums = (int**) msg;
-            if ((int)((SOURCE+1) * sizeof(int)) < length)
-            {
-                if ((*csums)[SOURCE] != this_checksum)
-                {
-                    PS_DEBUG("reg: checksum mismatch from %i", packet_source);
-                    resend_all_updates();
-                }
-            }
-            else
-            {
-                PS_ERROR("reg: sync packet too short");
-            }
-        }
-            break;
-        case REGISTRY_UPDATE_PACKET:
-            //receive registry update
-            if (length >= (int) sizeof(ps_update_packet_t))
-            {
-                ps_update_packet_t *pkt = (ps_update_packet_t*) msg;
-                set_registry_entry(pkt->domain, pkt->name, pkt->value);
-            }
-            
-            break;
-        default:
-            break;
-    }
-}
-
-//resend all the entries I own except local-only
-void ps_registry::resend_all_updates()
-{
-    for (auto domain_pos : registry)
-    {
-        for (auto name_pos : *domain_pos.second)
-        {
-            auto src    = name_pos.second.entry.value.source;
-            auto flags  = name_pos.second.entry.value.flags;
-            if ((src == SOURCE) && ((flags & PS_REGISTRY_LOCAL) == 0))
-            {
-                
-            }
-        }
-    }
 }
 
 //////////////////////C API

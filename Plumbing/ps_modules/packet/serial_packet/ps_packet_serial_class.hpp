@@ -29,13 +29,17 @@ public:
     uint16_t calculate_checksum(const uint8_t *packet, int length);
     
     //send packet
-    virtual ps_result_enum send_packet(const void *packet, int length) = 0;
+    virtual ps_result_enum send_packet(const void *packet, int length) override = 0;
     
     //serial errors
-    void process_observed_event(ps_serial_status_enum stat);
+    void process_observed_event(ps_root_class *src, int event) override;
+
+    //not used
+    void process_observed_data(ps_root_class *src, const void *msg, int length) override {}
+
 protected:
 
-    void *rxmsg;
+    uint8_t rxmsg[200];
 };
 
 #endif /* ps_packet_serial_class_hpp */

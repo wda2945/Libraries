@@ -21,7 +21,7 @@ public:
     ~ps_packet_serial_linux();
     
     //send packet
-    ps_result_enum send_packet(const void *packet, int length);
+    ps_result_enum send_packet(const void *packet, int length) override;
     
 protected:
     thread *packet_thread;

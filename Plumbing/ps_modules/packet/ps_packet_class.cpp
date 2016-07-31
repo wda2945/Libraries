@@ -7,19 +7,16 @@
 //
 
 #include "ps_packet_class.hpp"
+#include "pubsub/ps_pubsub_class.hpp"
 
-ps_packet_class::ps_packet_class(const char *name, int _max_packet)
-: ps_root_class(name)
+ps_packet_class::ps_packet_class(const char *name) : ps_root_class(name)
 {
-	max_packet_size = _max_packet;
-	if (max_packet_size == 0) max_packet_size = PS_MAX_PACKET;
+	max_packet_size = the_broker().max_ps_packet;
 }
 
-ps_packet_class::ps_packet_class(std::string name, int _max_packet)
-: ps_root_class(name)
+ps_packet_class::ps_packet_class(std::string name) : ps_root_class(name)
 {
-	max_packet_size = _max_packet;
-	if (max_packet_size == 0) max_packet_size = PS_MAX_PACKET;
+	max_packet_size = the_broker().max_ps_packet;
 }
 
 ps_packet_class::~ps_packet_class()
