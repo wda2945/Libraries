@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <signal.h>
+#include <string.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -33,16 +34,22 @@
 ps_socket_server::ps_socket_server(int _listen_port_number, const char *ping_target)
 {
 	listen_port_number = _listen_port_number;
-	pingTarget = strdup(ping_target);
 
 	//create agent Listen thread
 	listenThread = new std::thread([this](){ServerListenThreadMethod();});
 
 	if (ping_target)
 	{
+		pingTarget = strdup(ping_target);
 		//create agent Ping thread
 		pingThread = new std::thread([this](){ServerPingThreadMethod();});
 	}
+	else
+	{
+		//create agent Broadcast thread
+		broadcastThread = new std::thread([this](){ServerBroadcastThreadMethod();});
+	}
+
 }
 ps_socket_server::~ps_socket_server()
 {
@@ -68,6 +75,44 @@ void ps_socket_server::ServerPingThreadMethod()
 		}
 
 		sleep(10);
+	}
+}
+
+void ps_socket_server::ServerBroadcastThreadMethod()
+{
+	int broadcastSocket;
+	char buf[] = SOURCE_NAME;
+
+	while (1)
+	{
+		struct sockaddr_in sockAddress;
+		socklen_t len = sizeof(sockAddress);
+
+		memset(&sockAddress, 0, sizeof(sockAddress));
+		sockAddress.sin_family = AF_INET;
+		sockAddress.sin_port = htons(5000);
+		sockAddress.sin_addr.s_addr = 0xffffffff;
+
+		if ((broadcastSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) >= 0)
+		{
+			int bc {1};
+			setsockopt(broadcastSocket, SOL_SOCKET, SO_BROADCAST, &bc, 4);
+
+			if (sendto(broadcastSocket, buf, strlen(buf) +1, 0, (struct sockaddr*) &sockAddress, len) > 0)
+			{
+				PS_DEBUG("server: broadcast dgram sent");
+			}
+			else
+			{
+				PS_ERROR("server: broadcast sendto error : %s, ", strerror(errno));
+			}
+			close(broadcastSocket);
+		}
+		else
+		{
+			PS_ERROR("server: broadcast socket error : %s, ", strerror(errno));
+		}
+		sleep(5);
 	}
 }
 

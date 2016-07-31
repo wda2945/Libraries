@@ -13,7 +13,7 @@
 //Packet Types
 
 #define packet_macro(e, name, qos) e,
-typedef enum : ps_packet_type_t {
+typedef enum {
 #include "ps_packet_macros.h"
 	PACKET_TYPES_COUNT
 } ps_packet_type_enum;

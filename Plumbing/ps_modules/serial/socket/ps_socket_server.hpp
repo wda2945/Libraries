@@ -22,6 +22,8 @@ class ps_socket_server {
 
 	std::thread *listenThread;
 	std::thread *pingThread;
+	std::thread *broadcastThread;
+
 
 public:
 
@@ -30,6 +32,7 @@ public:
 
 	void ServerListenThreadMethod();
 	void ServerPingThreadMethod();
+	void ServerBroadcastThreadMethod();
 };
 
 #endif /* ps_socket_server_hpp */

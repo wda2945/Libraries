@@ -19,30 +19,52 @@
 #include <errno.h>
 #include <signal.h>
 
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include <netdb.h>
 
 #include "serial/socket/ps_socket_client.hpp"
 
-ps_socket_client::ps_socket_client(const char *_server_name, const char *_ip_address, int _port_number): ps_socket(_server_name, 0)
+ps_socket_client::ps_socket_client(const char *_ip_address, int _port_number): ps_socket("sock_client", 0)
 {
-	server_name = strdup(_server_name);
 	if (_ip_address) ip_address = strdup(_ip_address);
+    else ip_address = nullptr;
+    
 	port_number = _port_number;
     
 	//create connect thread
     connect_thread = new std::thread([this](){client_connect_thread_method();});
+    
+    //create ping listen thread
+    ping_thread = new std::thread([this](){client_ping_thread_method();});
+}
+
+void ps_socket_client::set_ip_address(const char *_ip_address)
+{
+    switch(connect_status)
+    {
+        case PS_CLIENT_CONNECTED:
+            close(rxSocket);
+            close(txSocket);
+            txSocket = rxSocket = 0;
+            set_client_status(PS_CLIENT_LOST_CONNECTION);
+            break;
+        default:
+            break;
+    }
+    if (_ip_address) ip_address = strdup(_ip_address);
+    else ip_address = nullptr;
 }
 
 ps_socket_client::~ps_socket_client()
 {
     delete connect_thread;
+    delete ping_thread;
 }
 
 void ps_socket_client::client_connect_thread_method()
 {
-	struct hostent *server;
-
     PS_DEBUG("sock: connect thread started");
     
     while (1)
@@ -55,8 +77,7 @@ void ps_socket_client::client_connect_thread_method()
                 sleep(1);
                 break;
             default:
-                
-                //first try hard wired IP address
+
                 if (ip_address)
                 {
                     PS_DEBUG("sock: connecting to %s", ip_address);
@@ -68,24 +89,6 @@ void ps_socket_client::client_connect_thread_method()
                     ipAddress.bytes[2] = b2;
                     ipAddress.bytes[3] = b3;
                     set_client_status(connect_to_server());
-                }
-                
-                if (connect_status == PS_CLIENT_CONNECTED) continue;
-                
-                //next try Bonjour
-                if (server_name)
-                {
-                    PS_DEBUG("sock: connecting to %s", server_name);
-                    ipAddressStr[0] = 0;
-                    
-                    set_client_status(PS_CLIENT_SEARCHING);
-                    
-                    server = gethostbyname2(server_name, AF_INET);
-                    if (server != NULL)
-                    {
-                        memcpy(ipAddress.bytes, server->h_addr, 4);
-                        set_client_status(connect_to_server());
-                    }
                 }
                 break;
         }
@@ -195,3 +198,31 @@ void ps_socket_client::get_client_status_caption(char *buff, int len)
 		break;
 	}
 }
+
+//thread to listen for pings
+void callback(char *robot, char *ip_address, void *args);
+
+void ps_socket_client::client_ping_thread_method()
+{
+    pingListener(callback, this);
+}
+
+//ping callback
+void callback(char *robot, char *ip_address, void *args)
+{
+    ps_socket_client *psc = (ps_socket_client*) args;
+    psc->ping_callback_method(robot, ip_address);
+}
+void ps_socket_client::ping_callback_method(char *robot, char *ip_address)
+{
+    for (auto obs : pingObservers)
+    {
+        (obs.callback)(robot, ip_address, obs.args);
+    }
+}
+void ps_socket_client::add_ping_observer(PingCallback_t callback, void *args)
+{
+    PingObserver_t obs {callback, args};
+    pingObservers.push_back(obs);
+}
+

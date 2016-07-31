@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 
 #include "ps_socket.hpp"
+#include "ps_pingListener.h"
 
 typedef enum {
 	PS_CLIENT_UNDEFINED,
@@ -29,16 +30,25 @@ typedef union {
     in_addr_t address;
 } IPaddress_t;
 
+typedef struct {
+    PingCallback_t *callback;
+    void *args;
+} PingObserver_t;
+
 class ps_socket_client  : public ps_socket {
 public:
 
-    ps_socket_client(const char *server_name, const char *ip_address, int port_number);
+    ps_socket_client(const char *ip_address, int port_number);
     ~ps_socket_client();
 
+    void set_ip_address(const char *ip_address);
+    
     bool isConnected(){return (connect_status == PS_CLIENT_CONNECTED);}
     
     //get a caption for the app
 	void get_client_status_caption(char *buff, int len);
+    
+    void add_ping_observer(PingCallback_t callback, void *args);
     
 protected:
     
@@ -48,7 +58,10 @@ protected:
     
     //thread to connect to server
     std::thread *connect_thread;
-    
+
+    //thread to connect to server
+    std::thread *ping_thread;
+
     //status - see above
 	ps_client_status_enum connect_status;
 
@@ -58,6 +71,10 @@ protected:
     //connect thread method
 	void client_connect_thread_method();
 
+    //ping thread method
+    void client_ping_thread_method();
+    void ping_callback_method(char *robot, char *ip_address);
+    
     //connection attempt method
 	ps_client_status_enum connect_to_server();
 
@@ -68,6 +85,9 @@ protected:
     //intercepts socket errors
     void notify_new_event(ps_root_class *rcl, int res) override;
 
+    std::vector<PingObserver_t> pingObservers;
+    
+    friend void callback(char *robot, char *ip_address, void *args);
 };
 
 #endif /* ps_socket_client_hpp */
