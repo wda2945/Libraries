@@ -191,7 +191,7 @@ void ps_socket_client::get_client_status_caption(char *buff, int len)
 		snprintf(buff, len, "Connected to %s", ipAddressStr);
 		break;
     case PS_CLIENT_LOST_CONNECTION:
-		snprintf(buff, len, "Lost Connection");
+		snprintf(buff, len, "No Connection");
 		break;
 	default:
 		snprintf(buff, len, "Unknown");

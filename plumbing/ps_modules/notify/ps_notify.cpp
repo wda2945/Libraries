@@ -20,7 +20,6 @@ ps_notify_class::~ps_notify_class(){
     
 }
 
-
 DEFINE_MUTEX(eventMtx);
 DEFINE_MUTEX(conditionMtx);
 
@@ -31,7 +30,15 @@ DEFINE_MUTEX(conditionMtx);
 //Raise an event
 ps_result_enum ps_notify_class::ps_notify_event_method(ps_event_id_t event)
 {
-    PS_DEBUG("not: notify event #%i", event);
+	if (event >= event_count)
+	{
+		PS_DEBUG("not: notify event #%i", event);
+	}
+	else
+	{
+		PS_DEBUG("not: notify event %s", event_names[event]);
+	}
+
     the_broker().publish_packet(EVENT_PACKET, &event, (int) sizeof(ps_event_id_t));
     
     //notify observers
@@ -66,58 +73,85 @@ ps_result_enum ps_notify_class::ps_add_event_observer_method(ps_event_id_t event
     return PS_OK;
 }
 
+
 ////////////////////////// CONDITIONS
 
 
 //Set/cancel a condition
 ps_result_enum ps_notify_class::ps_set_condition_method(ps_condition_id_t condition)
 {
+	if (condition == 0) return PS_OK;
+
     if (condition < PS_CONDITIONS_COUNT)
     {
-        PS_DEBUG("not: set condition #%i", condition);
-        LOCK_MUTEX(conditionMtx);
-        
-        conditions[SOURCE].set(condition);
-        
-        UNLOCK_MUTEX(conditionMtx);
-        
-        //notify observers
-        notify_condition_observer(SOURCE, condition, true);
-        
+    	if (!conditions[SOURCE].test(condition))
+    	{
+    		if (condition >= condition_count)
+    		{
+    			PS_DEBUG("not: set condition #%i", condition);
+    		}
+    		else
+    		{
+    			PS_DEBUG("not: set condition %s", condition_names[condition]);
+    		}
+
+    		LOCK_MUTEX(conditionMtx);
+
+    		conditions[SOURCE].set(condition);
+
+    		UNLOCK_MUTEX(conditionMtx);
+
+    		//notify observers
+    		notify_condition_observer(SOURCE, condition, true);
+    	}
         return PS_OK;
     }
     else
     {
-        PS_DEBUG("not: invalid set condition #%i", condition);
+    	PS_ERROR("not: invalid set condition #%i", condition);
         return PS_INVALID_PARAMETER;
     }
 }
 
 ps_result_enum ps_notify_class::ps_cancel_condition_method(ps_condition_id_t condition)
 {
-    if (condition < PS_CONDITIONS_COUNT)
-    {
-        PS_DEBUG("not: cancel condition #%i", condition);
-        LOCK_MUTEX(conditionMtx);
-        
-        conditions[SOURCE].reset(condition);
-        
-        UNLOCK_MUTEX(conditionMtx);
-        
-        //notify observers
-        notify_condition_observer(SOURCE, condition, false);
-        
-        return PS_OK;
+	if (condition == 0) return PS_OK;
+
+	if (condition < PS_CONDITIONS_COUNT)
+	{
+		if (conditions[SOURCE].test(condition))
+		{
+			if (condition >= condition_count)
+			{
+				PS_DEBUG("not: cancel condition #%i", condition);
+			}
+			else
+			{
+				PS_DEBUG("not: cancel condition %s", condition_names[condition]);
+			}
+
+			LOCK_MUTEX(conditionMtx);
+
+			conditions[SOURCE].reset(condition);
+
+			UNLOCK_MUTEX(conditionMtx);
+
+			//notify observers
+			notify_condition_observer(SOURCE, condition, false);
+		}
+		return PS_OK;
     }
     else
     {
-        PS_DEBUG("not: invalid cancel condition #%i", condition);
+        PS_ERROR("not: invalid cancel condition #%i", condition);
         return PS_INVALID_PARAMETER;
     }
 }
 
 bool ps_notify_class::ps_test_condition_method(Source_t src, ps_condition_id_t condition)
 {
+	if (condition == 0) return false;
+
     if (condition < PS_CONDITIONS_COUNT)
     {
         LOCK_MUTEX(conditionMtx);
@@ -130,7 +164,7 @@ bool ps_notify_class::ps_test_condition_method(Source_t src, ps_condition_id_t c
     }
     else
     {
-        PS_DEBUG("not: invalid test condition #%i", condition);
+        PS_ERROR("not: invalid test condition #%i", condition);
         return false;
     }
 }
@@ -138,6 +172,8 @@ bool ps_notify_class::ps_test_condition_method(Source_t src, ps_condition_id_t c
 ps_result_enum ps_notify_class::ps_add_condition_observer_method(Source_t src, ps_condition_id_t condition,
                                                                  ps_condition_observer_callback_t *callback, void *arg)
 {
+	if (condition == 0) return PS_INVALID_PARAMETER;
+
     if (condition < PS_CONDITIONS_COUNT)
     {
         ps_condition_observer obs {callback, arg};
@@ -163,9 +199,17 @@ ps_result_enum ps_notify_class::ps_add_condition_observer_method(Source_t src, p
     }
     else
     {
-        PS_DEBUG("not: invalid add condition observer #%i", condition);
+    	PS_ERROR("not: invalid add condition observer #%i", condition);
         return PS_INVALID_PARAMETER;
     }
+}
+
+ps_result_enum ps_notify_class::ps_republish_conditions()
+{
+	LOCK_MUTEX(conditionMtx);
+	current.reset();
+	UNLOCK_MUTEX(conditionMtx);
+	return PS_OK;
 }
 
 //helpers
@@ -211,7 +255,6 @@ void ps_notify_class::notify_condition_observer(Source_t src, ps_condition_id_t 
 
 void ps_notify_class::notify_conditions_thread()
 {
-    bitset<PS_CONDITIONS_COUNT> current {0};
 
     while(1)
     {
@@ -247,12 +290,11 @@ void ps_notify_class::message_handler(ps_packet_source_t src,
             if (length >= (int) sizeof(ps_event_id_t))
         {
             const ps_event_id_t *event = (ps_event_id_t*) msg;
-
             notify_event_observer(*event);
         }
             break;
         case CONDITIONS_PACKET:
-            if (length >= (int) sizeof(ps_conditions_message_t))
+//            if (length >= (int) sizeof(ps_conditions_message_t))
         {
             ps_conditions_message_t *c_msg = (ps_conditions_message_t*) msg;
 
@@ -294,6 +336,13 @@ ps_result_enum ps_add_event_observer(ps_event_id_t event, ps_event_observer_call
     return  the_notifier().ps_add_event_observer_method(event, callback, arg);
 }
 
+ps_result_enum ps_register_event_names(const char **names, int count)
+{
+	the_notifier().event_names = const_cast<char**>(names);
+	the_notifier().event_count = count;
+	return PS_OK;
+}
+
 //Set/cancel a condition
 ps_result_enum ps_set_condition(ps_condition_id_t condition)
 {
@@ -312,4 +361,11 @@ bool ps_test_condition(Source_t src, ps_condition_id_t condition)
 ps_result_enum ps_add_condition_observer(Source_t src, ps_condition_id_t condition, ps_condition_observer_callback_t *callback, void *arg)
 {
     return the_notifier().ps_add_condition_observer_method(src, condition, callback, arg);
+}
+
+ps_result_enum ps_register_condition_names(const char **names, int count)
+{
+	the_notifier().condition_names = const_cast<char**>(names);
+	the_notifier().condition_count = count;
+	return PS_OK;
 }

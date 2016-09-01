@@ -25,6 +25,8 @@ ps_result_enum ps_subscribe(ps_topic_id_t topic_id, message_handler_t*);
 //publish a message to a topic
 ps_result_enum ps_publish(ps_topic_id_t topic_id, const void *message, int length);
 
+ps_result_enum ps_register_topic_names(const char **names, int count);
+
 #ifdef __cplusplus
 }
 #endif

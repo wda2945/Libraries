@@ -29,27 +29,18 @@
 #include "transport/linux/ps_transport_linux.hpp"
 #include "network/ps_network.hpp"
 
-#include "ping.h"
+#include "hexapod.h"
 
-ps_socket_server::ps_socket_server(int _listen_port_number, const char *ping_target)
+ps_socket_server::ps_socket_server(int _listen_port_number, int _ping_port_number)
 {
-	listen_port_number = _listen_port_number;
+	listen_port_number  = _listen_port_number;
+	ping_port_number	= _ping_port_number;
 
 	//create agent Listen thread
 	listenThread = new std::thread([this](){ServerListenThreadMethod();});
 
-	if (ping_target)
-	{
-		pingTarget = strdup(ping_target);
-		//create agent Ping thread
-		pingThread = new std::thread([this](){ServerPingThreadMethod();});
-	}
-	else
-	{
-		//create agent Broadcast thread
-		broadcastThread = new std::thread([this](){ServerBroadcastThreadMethod();});
-	}
-
+	//create agent Ping thread
+	pingThread = new std::thread([this](){ServerPingThreadMethod();});
 }
 ps_socket_server::~ps_socket_server()
 {
@@ -59,29 +50,17 @@ ps_socket_server::~ps_socket_server()
 	close(listen_socket);
 }
 
-//thread to ping the gateway every 10 seconds
-bool ping_response_received;
+//thread to broadcast ping every 5 seconds
+
 void ps_socket_server::ServerPingThreadMethod()
 {
-	while (1)
-	{
-		if (pingServer(pingTarget) > 0)
-		{
-			ping_response_received = true;
-		}
-		else
-		{
-			ping_response_received = false;
-		}
-
-		sleep(10);
-	}
-}
-
-void ps_socket_server::ServerBroadcastThreadMethod()
-{
 	int broadcastSocket;
-	char buf[] = SOURCE_NAME;
+	int buflen = strlen(SOURCE_NAME) + 6;
+	char buf[buflen];
+
+	snprintf(buf, buflen, "%s-%i", SOURCE_NAME, listen_port_number);
+
+	PS_DEBUG("server: ping thread started");
 
 	while (1)
 	{
@@ -90,7 +69,7 @@ void ps_socket_server::ServerBroadcastThreadMethod()
 
 		memset(&sockAddress, 0, sizeof(sockAddress));
 		sockAddress.sin_family = AF_INET;
-		sockAddress.sin_port = htons(5000);
+		sockAddress.sin_port = htons(ping_port_number);
 		sockAddress.sin_addr.s_addr = 0xffffffff;
 
 		if ((broadcastSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) >= 0)
@@ -98,9 +77,9 @@ void ps_socket_server::ServerBroadcastThreadMethod()
 			int bc {1};
 			setsockopt(broadcastSocket, SOL_SOCKET, SO_BROADCAST, &bc, 4);
 
-			if (sendto(broadcastSocket, buf, strlen(buf) +1, 0, (struct sockaddr*) &sockAddress, len) > 0)
+			if (sendto(broadcastSocket, buf, buflen, 0, (struct sockaddr*) &sockAddress, len) > 0)
 			{
-				PS_DEBUG("server: broadcast dgram sent");
+//				PS_DEBUG("server: broadcast datagram sent");
 			}
 			else
 			{
@@ -190,6 +169,8 @@ void ps_socket_server::ServerListenThreadMethod()
 			the_network().add_transport_to_network(trns);
 
 			sock->set_serial_status(PS_SERIAL_ONLINE);
+
+			ps_set_condition(CLIENT_CONNECTED);
 		}
 	}
 

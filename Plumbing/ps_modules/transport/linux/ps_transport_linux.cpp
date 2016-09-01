@@ -99,7 +99,7 @@ void ps_transport_linux::transport_linux_send_thread_method()
                 
                 protocolCond.wait_until(lck, now + milliseconds(PS_TRANSPORT_REPLYWAIT_MSECS));
                 
-                if (statusRx == PS_TRANSPORT_RX_WAIT){
+                if (statusRx == PS_TRANSPORT_RX_WAIT || statusRx == PS_TRANSPORT_RX_NAK){
 //                    PS_DEBUG("trns: status packet timeout");
                     continue; //timeout
                 }
@@ -242,7 +242,7 @@ void ps_transport_linux::transport_linux_send_thread_method()
 void ps_transport_linux::send_packet2(const void *packet1, int len1, const void *packet2, int len2)
 {
     if (!transport_is_online) {
-//        PS_DEBUG("trns: offline");
+        PS_DEBUG("trns: offline");
         return;
     }
     

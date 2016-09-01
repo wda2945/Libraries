@@ -12,6 +12,7 @@
 #include "ps_registry.hpp"
 #include "ps_config.h"
 #include "pubsub/ps_pubsub_class.hpp"
+#include "notify/ps_notify.hpp"
 
 ps_registry& the_registry()
 {
@@ -165,7 +166,8 @@ ps_result_enum ps_registry::add_new_registry_entry(const char *_domain, const ch
 
         notify_domain_observers(_domain, _name);
         
-        the_broker().publish_packet(REGISTRY_UPDATE_PACKET, &new_entry.entry, sizeof(ps_update_packet_t));
+        if (!(flags & PS_REGISTRY_LOCAL))
+        	the_broker().publish_packet(REGISTRY_UPDATE_PACKET, &new_entry.entry, sizeof(ps_update_packet_t));
 
         return PS_OK;
 	}
@@ -241,7 +243,8 @@ ps_result_enum ps_registry::set_new_registry_entry(const char *_domain, const ch
 
         notify_domain_observers(_domain, _name);
 
-        the_broker().publish_packet(REGISTRY_UPDATE_PACKET, &new_entry.entry, sizeof(ps_update_packet_t));
+        if (!(set_value.flags & PS_REGISTRY_LOCAL))
+        		the_broker().publish_packet(REGISTRY_UPDATE_PACKET, &new_entry.entry, sizeof(ps_update_packet_t));
 
         return PS_OK;
     }
@@ -302,7 +305,8 @@ ps_result_enum ps_registry::set_registry_entry(const char *_domain, const char *
 
         notify_domain_observers(_domain, _name);
         
-        the_broker().publish_packet(REGISTRY_UPDATE_PACKET, update_pkt, sizeof(ps_update_packet_t));
+        if (!(pos->second.entry.value.flags & PS_REGISTRY_LOCAL))
+        	the_broker().publish_packet(REGISTRY_UPDATE_PACKET, update_pkt, sizeof(ps_update_packet_t));
 
         return reply;
 	}
@@ -520,6 +524,19 @@ void ps_registry::message_handler(ps_packet_source_t packet_source, ps_packet_ty
             case REGISTRY_SYNC_PACKET:
                 //receive registry sync packet
             {
+                char timeBuff[20];
+                const time_t now = time(NULL);
+                struct tm *timestruct = localtime(&now);
+                
+                snprintf(timeBuff, 20, "%02i:%02i:%02i",
+                         timestruct->tm_hour, timestruct->tm_min, timestruct->tm_sec);
+                
+                if (ps_registry_set_text("Registry", "Last Sync Rx", timeBuff) == PS_NAME_NOT_FOUND)
+                {
+                    ps_registry_add_new("Registry", "Last Sync Rx", PS_REGISTRY_TEXT_TYPE, PS_REGISTRY_LOCAL + PS_REGISTRY_SRC_WRITE);
+                    ps_registry_set_text("Registry", "Last Sync Rx", timeBuff);
+                }
+                
                 PS_DEBUG("reg: rx sync packet");
                 calculate_checksum();
 
@@ -531,6 +548,7 @@ void ps_registry::message_handler(ps_packet_source_t packet_source, ps_packet_ty
                     {
                         PS_DEBUG("reg: checksum %i from %i. Should be %i", csums[SOURCE], packet_source, checksums[SOURCE]);
                         resend_all_updates();
+                        the_notifier().ps_republish_conditions();
                     }
                 }
                 else

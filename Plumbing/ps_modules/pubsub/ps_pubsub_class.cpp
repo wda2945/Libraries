@@ -85,7 +85,15 @@ void ps_pubsub_class::forward_topic_message(const void *msg, int len)
 		if (tId != client->topicList.end())
 		{
 			//this client is subscribed
-            PS_DEBUG("pub: sending topic %i to message handler", prefix->topic_id);
+			if (prefix->topic_id >= topic_count)
+			{
+				PS_DEBUG("pub: sending topic %i to message handler", prefix->topic_id);
+			}
+			else
+			{
+				PS_DEBUG("pub: sending topic %s to message handler", topic_names[prefix->topic_id]);
+			}
+
             //pointer to messageHandler C function
             (client->messageHandler)(message, length);
 		}
@@ -98,7 +106,15 @@ void ps_pubsub_class::forward_topic_message(const void *msg, int len)
         if (tId != trns->topicList.end())
         {
             //this transport is subscribed
-            PS_DEBUG("pub: sending topic %i to %s", prefix->topic_id, trns->name.c_str());
+			if (prefix->topic_id >= topic_count)
+			{
+				PS_DEBUG("pub: sending topic %i to %s", prefix->topic_id, trns->name.c_str());
+			}
+			else
+			{
+				PS_DEBUG("pub: sending topic %s to %s", topic_names[prefix->topic_id], trns->name.c_str());
+			}
+
             trns->send_packet(msg, len);
         }
     }
@@ -234,6 +250,14 @@ ps_result_enum ps_publish(ps_topic_id_t topic_id, const void *message, int lengt
     return the_broker().publish(topic_id, message, length);
 }
 
+
+ps_result_enum ps_register_topic_names(const char **names, int count)
+{
+	the_broker().topic_names = const_cast<char**>(names);
+	the_broker().topic_count = count;
+	return PS_OK;
+}
+
 /////////////////////////// PLUMBING SERVICES
 
 int get_max_ps_packet()
@@ -288,8 +312,15 @@ ps_result_enum ps_pubsub_class::publish_packet(ps_packet_type_t packet_type, con
 //suscribe to topic Id. Transport version.
 ps_result_enum ps_pubsub_class::subscribe(ps_topic_id_t topicId, ps_transport_class *pst)
 {
-    PS_DEBUG("pub: subscribe to %i from %s", topicId, pst->name.c_str());
-    
+	if (topicId >= topic_count)
+	{
+		PS_DEBUG("pub: subscribe to %i from %s", topicId, pst->name.c_str());
+	}
+	else
+	{
+		PS_DEBUG("pub: subscribe to %s from %s", topic_names[ topicId], pst->name.c_str());
+	}
+
     LOCK_MUTEX(pubsubMtx);
     
     //insert the topic
@@ -314,7 +345,15 @@ void ps_pubsub_class::process_observed_data(ps_root_class *_pst, const void *mes
     {
         if (prefix->packet_type == PUBLISH_PACKET)
         {
-            PS_DEBUG("pub: rx topic %i from %s", prefix->topic_id, pst->name.c_str());
+        	if (prefix->topic_id >= topic_count)
+        	{
+        		PS_DEBUG("pub: rx topic %i from %s", prefix->topic_id, pst->name.c_str());
+        	}
+        	else
+        	{
+        		PS_DEBUG("pub: rx topic %s from %s", topic_names[prefix->topic_id], pst->name.c_str());
+        	}
+
         }
         else
         {
@@ -416,7 +455,15 @@ ps_result_enum ps_pubsub_class::subscribe(ps_topic_id_t topicId, message_handler
         {
             client->topicList.insert(topicId);	//add new subscription
             
-            PS_DEBUG("pub: subscribed to topic %i", topicId);
+        	if (topicId >= topic_count)
+        	{
+        		PS_DEBUG("pub: subscribe to topic %i", topicId);
+        	}
+        	else
+        	{
+        		PS_DEBUG("pub: subscribe to topic %s", topic_names[topicId]);
+        	}
+
             UNLOCK_MUTEX(pubsubMtx);
             return PS_OK;
         }
@@ -429,7 +476,15 @@ ps_result_enum ps_pubsub_class::subscribe(ps_topic_id_t topicId, message_handler
         
         clientList.insert(newClient);
         
-        PS_DEBUG("pub: new client subscribed to topic %i", topicId);
+    	if (topicId >= topic_count)
+    	{
+    		PS_DEBUG("pub: new client subscribed to topic %i", topicId);
+    	}
+    	else
+    	{
+    		PS_DEBUG("pub: new client subscribed to topic %s", topic_names[topicId]);
+    	}
+
     }
     UNLOCK_MUTEX(pubsubMtx);
     return PS_OK;
@@ -445,17 +500,34 @@ ps_result_enum ps_pubsub_class::publish(ps_topic_id_t topicId, const void *messa
     
     if (length <= (int) max_ps_packet)
     {
-        PS_DEBUG("pub: publish to topic %i", topicId);
+    	if (topicId >= topic_count)
+    	{
+            PS_DEBUG("pub: publish to topic %i", topicId);
+    	}
+    	else
+    	{
+            PS_DEBUG("pub: publish to topic %s", topic_names[topicId]);
+    	}
+
         //queue for broker thread
         brokerQueue->copy_2message_parts_to_q( &prefix, sizeof(ps_pubsub_header_t), message, length);
         return PS_OK;
     }
     else
     {
-        PS_ERROR("pub: packet to topic %i too big", topicId);
+    	if (topicId >= topic_count)
+    	{
+    		PS_ERROR("pub: packet to topic %i too big", topicId);
+    	}
+    	else
+    	{
+    		PS_ERROR("pub: packet to topic %s too big", topic_names[topicId]);
+    	}
+
         return PS_LENGTH_ERROR;
     }
 }
+
 
 #define packet_macro(e, name, qos) name,
 const char *packet_type_names[] = {

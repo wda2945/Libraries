@@ -37,6 +37,8 @@ class ps_pubsub_class : public ps_root_class {
 
 public:
     int max_ps_packet;
+    char **topic_names {nullptr};
+    int topic_count {0};
     
     ////////////////////// PLUMBING CLIENT API
     //register for system packets - (subscribe)

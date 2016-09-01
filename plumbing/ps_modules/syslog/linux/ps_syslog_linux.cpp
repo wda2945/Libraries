@@ -48,10 +48,10 @@ ps_syslog_linux::ps_syslog_linux()
 	if (logfile == NULL)
 	{
 		logfile = stderr;
-		fprintf(stderr, "syslog: fopen(%s) fail (%s)\n", logfilepath, strerror(errno));
+		PS_ERROR("syslog: fopen(%s) fail (%s)\n", logfilepath, strerror(errno));
 	}
 	else {
-		fprintf(stderr, "syslog: Logfile opened on %s\n", logfilepath);
+		PS_DEBUG("syslog: Logfile opened on %s\n", logfilepath);
 	}
 
 	//queue for messages
@@ -74,6 +74,8 @@ void ps_syslog_linux::logging_thread_method()
 
 	the_broker().register_object(SYSLOG_PACKET, this);
 
+	LogInfo("Logging thread started");
+
 	while(1)
 	{
 		int len;
@@ -86,10 +88,13 @@ void ps_syslog_linux::logging_thread_method()
 
 void ps_syslog_linux::message_handler(ps_packet_source_t packet_source, ps_packet_type_t packet_type, const void *msg, int length)
 {
-	if (packet_type == SYSLOG_PACKET &&
-			length <= (int) sizeof(ps_syslog_message_t))	//sanity check
+	if (packet_type == SYSLOG_PACKET)	//sanity check
 	{
 		log_print_queue->copy_message_to_q(msg, length);
+	}
+	else
+	{
+		PS_ERROR("log: bad message_handler call: packet %i, length %i", packet_type, length);
 	}
 }
 
@@ -138,7 +143,7 @@ void ps_syslog_linux::print_log_message(ps_syslog_message_t *log_msg)
 	fprintf(logfile, "%s", printBuff);
 	fflush(logfile);
 
-	printf("%s", printBuff);
+	PS_DEBUG("%s", printBuff);
 
 	UNLOCK_MUTEX(printlogMtx);
 

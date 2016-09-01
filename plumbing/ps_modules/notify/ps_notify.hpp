@@ -36,6 +36,10 @@ typedef unsigned long long ps_conditions_message_t; //long long bitmap used to c
 
 class ps_notify_class : public ps_root_class {
 public:
+	char **event_names;
+	int event_count;
+	char **condition_names;
+	int condition_count;
 
     ////////////////////////// EVENTS
     //methods called from C api
@@ -56,12 +60,15 @@ public:
     
     ps_result_enum ps_add_condition_observer_method(Source_t src, ps_condition_id_t condition, ps_condition_observer_callback_t *callback, void *arg);
     
+    ps_result_enum ps_republish_conditions();
+
 protected:
     ps_notify_class();
     ~ps_notify_class();
 
     //conditions
     bitset<PS_CONDITIONS_COUNT> conditions[SRC_COUNT];
+    bitset<PS_CONDITIONS_COUNT> current {0};	//local conditions for publishing - last reported
     
     //observers
     map<ps_event_id_t, vector<ps_event_observer>> event_observers;

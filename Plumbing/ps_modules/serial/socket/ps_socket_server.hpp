@@ -11,28 +11,23 @@
 
 #include <thread>
 
-extern bool ping_response_received;
-
 class ps_socket_server {
 	int listen_port_number;
-	int listen_socket;
+	int ping_port_number;
 
-	bool ping_response_received;
-	char *pingTarget;
+	int listen_socket;
 
 	std::thread *listenThread;
 	std::thread *pingThread;
-	std::thread *broadcastThread;
-
-
-public:
-
-	ps_socket_server(int _listen_port_number, const char *ping_target);
-	~ps_socket_server();
 
 	void ServerListenThreadMethod();
 	void ServerPingThreadMethod();
-	void ServerBroadcastThreadMethod();
+
+public:
+
+	ps_socket_server(int _listen_port_number, int _ping_port_number);
+	~ps_socket_server();
+
 };
 
 #endif /* ps_socket_server_hpp */

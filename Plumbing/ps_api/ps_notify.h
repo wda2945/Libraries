@@ -28,6 +28,8 @@ extern "C" {
     
     ps_result_enum ps_add_event_observer(ps_event_id_t event, ps_event_observer_callback_t *callback, void *arg);
     
+    ps_result_enum ps_register_event_names(const char **names, int count);
+
     ////////////////////////// CONDITIONS
 
     typedef uint8_t ps_condition_id_t;
@@ -42,6 +44,8 @@ extern "C" {
     
     ps_result_enum ps_add_condition_observer(Source_t src, ps_condition_id_t condition, ps_condition_observer_callback_t *callback, void *arg);
     
+    ps_result_enum ps_register_condition_names(const char **names, int count);
+
 #ifdef __cplusplus
 }
 #endif

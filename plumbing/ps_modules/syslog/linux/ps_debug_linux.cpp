@@ -24,14 +24,22 @@ mutex	debugMtx;	//debug file mutex
 //defaults to plumbing.log
 void print_debug_message(const char *text)
 {
-    if (!plumbing_debug_file) plumbing_debug_file = fopen_logfile("plumbing");
+    if (!plumbing_debug_file){
+        debugMtx.lock();
+        if (!plumbing_debug_file) plumbing_debug_file = fopen_logfile("plumbing");
+        debugMtx.unlock();
+    }
 
     print_debug_message_to_file(plumbing_debug_file, text);
     print_debug_message_to_file(stdout, text);
 }
 void print_error_message(const char *text)
 {
-    if (!plumbing_debug_file) plumbing_debug_file = fopen_logfile("plumbing");
+    if (!plumbing_debug_file) {
+        debugMtx.lock();
+        if (!plumbing_debug_file) plumbing_debug_file = fopen_logfile("plumbing");
+        debugMtx.unlock();
+    }
     
     print_debug_message_to_file(plumbing_debug_file, text);
     print_debug_message_to_file(stderr, text);
@@ -81,6 +89,7 @@ FILE *fopen_logfile(const char *name)
 
         fprintf (dbg, "%s", printBuff);
     	fprintf (dbg, "Started %s logfile\n", name);
+        fprintf (stdout, "%s", printBuff);
     	fprintf (stdout, "Opened %s logfile\n", name);
     	return dbg;
     }
